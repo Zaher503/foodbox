@@ -1,0 +1,11 @@
+.env
+.secret
+venv/
+ollama/
+__pycache__/
+*.pyc
+*.bak*
+# recipe data lives outside the repo (/srv/recipebox), never commit it
+recipes/
+trash/
+jobs.sqlite*

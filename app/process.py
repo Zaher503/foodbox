@@ -1,0 +1,495 @@
+"""Step 3: turn a fetched folder into recipe.json. Whisper -> frame OCR -> structure. Cover is always thumbnail.jpg."""
+import base64
+import ctypes
+import glob
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import requests
+
+OLLAMA = "http://127.0.0.1:11434/api/generate"
+VL = "qwen2.5vl:7b"
+MEALS = ["Breakfast", "Lunch", "Dinner", "Snack", "Dessert", "Other"]
+
+
+def _preload_cuda():
+    import nvidia.cublas, nvidia.cudnn
+    for pkg in (nvidia.cublas, nvidia.cudnn):
+        for so in sorted(glob.glob(os.path.join(list(pkg.__path__)[0], "lib", "*.so*"))):
+            try:
+                ctypes.CDLL(so, mode=ctypes.RTLD_GLOBAL)
+            except OSError:
+                pass
+
+
+def transcribe(video: Path) -> str:
+    _preload_cuda()
+    from faster_whisper import WhisperModel
+    m = WhisperModel("large-v3", device="cuda", compute_type="int8_float16")
+    import numpy as np
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000",
+                          "-f", "f32le", "-"], check=True, capture_output=True).stdout
+    audio = np.frombuffer(raw, dtype=np.float32)
+    segs, _ = m.transcribe(audio, vad_filter=True, beam_size=5, condition_on_previous_text=False)
+    junk = re.compile(r"thank(s| you) (so much )?for (watching|listening)|subscribe|^\W*$", re.I)
+    text = " ".join(s.text.strip() for s in segs
+                    if s.no_speech_prob < 0.5 and s.avg_logprob > -1.0 and not junk.search(s.text))
+    del m
+    return text
+
+
+def extract_frames(video: Path, out: Path, every=2.0, width=768):
+    out.mkdir(exist_ok=True)
+    for f in out.glob("f_*.jpg"):
+        f.unlink()
+    subprocess.run(["ffmpeg", "-v", "error", "-i", str(video), "-vf",
+                    f"fps=1/{every},scale={width}:-2", "-q:v", "3",
+                    str(out / "f_%03d.jpg")], check=True)
+    return sorted(out.glob("f_*.jpg"))
+
+
+def ollama(prompt, images=None, num_ctx=8192, fmt="json", timeout=300):
+    body = {"model": VL, "prompt": prompt, "stream": False, "format": fmt,
+            "options": {"num_ctx": num_ctx, "temperature": 0.1}}
+    if images:
+        body["images"] = [base64.b64encode(Path(i).read_bytes()).decode() for i in images]
+    r = requests.post(OLLAMA, json=body, timeout=timeout)
+    r.raise_for_status()
+    return json.loads(r.json()["response"])
+
+
+FRAME_PROMPT = (
+    "This is one frame from a cooking video. Return JSON with keys: "
+    '"text": all readable on-screen text copied exactly (ingredient names and quantities, step text), '
+    "empty string if none."
+)
+
+
+def scan_frames(frames):
+    out = []
+    for f in frames:
+        try:
+            j = ollama(FRAME_PROMPT, [f], num_ctx=4096, timeout=120)
+            out.append({"frame": f.name, "text": str(j.get("text", "")).strip()})
+        except Exception as e:
+            out.append({"frame": f.name, "text": "", "err": str(e)[:80]})
+    return out
+
+
+def dedupe_text(items):
+    seen, out = set(), []
+    for t in items:
+        key = re.sub(r"\W+", " ", t.lower()).strip()
+        if key and key not in seen:
+            seen.add(key)
+            out.append(t)
+    return "\n".join(out)
+
+
+STRUCT_PROMPT = """You extract a cooking recipe. Use ONLY the sources below. Do not invent quantities or steps.
+Output JSON: {{"title": str, "meal": one of {meals}, "servings": str or null,
+"ingredients": [str, ...], "steps": [str, ...]}}
+Rules:
+- No intro, no backstory, no tips, no hashtags, no promotion. Just the recipe.
+- NEVER guess. Every number, quantity, time and temperature must appear in the sources below. If a quantity is not stated, write the ingredient name alone with no amount. Do not add ingredients or steps that are not stated or clearly named in the sources.
+- If the sources contain no recipe details at all, return empty "ingredients" and "steps" lists.
+- Ignore brand names and text printed on product packaging.
+- Ingredients: "quantity unit item" exactly as given; if no quantity is given write the item alone.
+- Steps: short imperative sentences in cooking order, include temperatures and times when stated.
+- Title: the dish name only.
+- The transcript is speech-to-text and can mishear cooking words ("cating" for "coating"); fix obvious mishearings using context.
+- Sources may disagree; prefer on-screen text for quantities, spoken transcript for method.
+
+CAPTION:
+{caption}
+
+SPOKEN TRANSCRIPT:
+{transcript}
+
+ON-SCREEN TEXT (deduplicated):
+{ocr}
+"""
+
+
+def clean_list(x):
+    out = []
+    for i in (x or []):
+        s = re.sub(r"\(\s*\(?\s*(I|we|my|our)\b[^()]*\)?\s*\)", "", str(i), flags=re.I)  # "(I like to use ...)"
+        s = re.sub(r"\s+", " ", s).strip()
+        if s:
+            out.append(s)
+    return out
+
+
+FRAC = {"½": "1/2", "¼": "1/4", "¾": "3/4", "⅓": "1/3", "⅔": "2/3"}
+NUMW = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7",
+        "eight": "8", "nine": "9", "ten": "10", "half": "1/2", "quarter": "1/4", "dozen": "12"}
+
+
+def _nums(text):
+    text = text.lower()
+    for k, v in FRAC.items():
+        text = text.replace(k, v)
+    found = set(re.findall(r"\d+(?:[./]\d+)?", text))
+    found |= {NUMW[w] for w in re.findall(r"[a-z]+", text) if w in NUMW}
+    return found
+
+
+def ground(ingredients, steps, corpus):
+    """Strip any number that is not present in the sources. Returns (ing, steps, n_dropped)."""
+    have, dropped = _nums(corpus), 0
+
+    def fix(line):
+        nonlocal dropped
+        bad = _nums(line) - have
+        if not bad:
+            return line
+        dropped += 1
+        for n in bad:
+            line = re.sub(rf"(?<![\d./]){re.escape(n)}(?![\d./])\s*(cups?|tbsp|tsp|tablespoons?|teaspoons?|lbs?|pounds?|oz|ounces?|g|grams?|kg|ml|l|minutes?|mins?|hours?|degrees?|°[CF]?)?\b\.?\s*(of )?", "", line, flags=re.I)
+        return re.sub(r"\s+", " ", line).strip(" ,;")
+
+    return [fix(i) for i in ingredients], [fix(s) for s in steps], dropped
+
+
+def from_jsonld(d: Path):
+    ld = json.loads((d / "jsonld.json").read_text())
+    steps = []
+    for s in ld.get("recipeInstructions", []):
+        if isinstance(s, str):
+            steps.append(s)
+        elif s.get("@type") == "HowToSection":
+            steps += [x.get("text", "") for x in s.get("itemListElement", [])]
+        else:
+            steps.append(s.get("text", ""))
+    y = ld.get("recipeYield")
+    y = y[0] if isinstance(y, list) and y else y
+    return {"title": ld.get("name"), "servings": str(y) if y else None,
+            "ingredients": clean_list(ld.get("recipeIngredient")),
+            "steps": clean_list(re.sub(r"<[^>]+>", "", s) for s in steps),
+            "nutrition": nutrition_from_ld(ld),
+            "prep_min": iso_minutes(ld.get("prepTime")), "cook_min": iso_minutes(ld.get("cookTime")),
+            "total_min": iso_minutes(ld.get("totalTime")),
+            "category_hint": str(ld.get("recipeCategory", ""))}
+
+
+def guess_meal(title, ingredients, hint=""):
+    j = ollama(f"Pick the meal type for this recipe. Options: {MEALS}. Title: {title}. "
+               f"Category hint: {hint}. Ingredients: {ingredients[:12]}. "
+               'Return JSON {"meal": "<option>"}', num_ctx=2048, timeout=120)
+    return j.get("meal") if j.get("meal") in MEALS else "Other"
+
+
+PAGE_PROMPT = """You extract a cooking recipe from the text of a web page. Use ONLY the page text below.
+Output JSON: {{"title": str, "meal": one of {meals}, "servings": str or null,
+"ingredients": [str, ...], "steps": [str, ...]}}
+Rules:
+- Skip the author's story, introduction, tips, notes, nutrition facts, reviews, ads and links to other recipes. Just the recipe.
+- NEVER guess. Copy quantities, times and temperatures exactly as written. Do not add ingredients or steps.
+- If the page has no recipe, return empty "ingredients" and "steps" lists.
+- Ingredients: "quantity unit item", one per entry, in the order listed. Drop optional commentary in parentheses.
+- Steps: the method in order, one action per entry, short imperative sentences. Keep times and temperatures.
+- Title: the recipe's own name exactly as the page titles it (remove site names and the word 'recipe'). Never rename or reinterpret the dish.
+- Servings: only if the page states a serving count or yield, otherwise null.
+
+PAGE TITLE: {title}
+
+PAGE TEXT:
+{text}
+"""
+
+ING_HEAD = re.compile(r"\W*(ingredients?|what you.?ll need|you will need)\W*", re.I)
+
+
+def page_text(html: str) -> str:
+    import trafilatura
+    t = trafilatura.extract(html, include_tables=True, include_comments=False, favor_recall=True,
+                            output_format="txt")
+    if not t:  # last resort: crude tag strip
+        t = re.sub(r"(?s)<(script|style|nav|header|footer)[^>]*>.*?</\1>", " ", html)
+        t = re.sub(r"<[^>]+>", "\n", t)
+    return re.sub(r"\n{3,}", "\n\n", t).strip()
+
+
+def recipe_window(text: str, limit=7000) -> str:
+    """Long blog posts bury the recipe card; start a little above the first Ingredients heading."""
+    lines = text.splitlines()
+    for i, l in enumerate(lines):
+        if len(l) < 40 and ING_HEAD.fullmatch(l.strip()):
+            return "\n".join(lines[max(0, i - 2):])[:limit]
+    return text[:limit]
+
+
+def finish(r, corpus, title_fallback="", evidence_min=60):
+    """Shared checks: no invented numbers, flag thin or amount-free recipes."""
+    r["title"] = re.sub(r"\s+", " ", str(r.get("title") or "")).strip() or title_fallback or "Untitled"
+    r["ingredients"] = clean_list(r.get("ingredients"))
+    r["steps"] = clean_list(r.get("steps"))
+    r["ingredients"], r["steps"], dropped = ground(r["ingredients"], r["steps"], corpus)
+    if r.get("servings") and not (_nums(str(r["servings"])) & _nums(corpus)):
+        r["servings"] = None
+    r["needs_review"] = None
+    if not r["ingredients"] or not r["steps"] or len(corpus.split()) < evidence_min:
+        r["ingredients"], r["steps"] = [], []
+        r["needs_review"] = "source has too little recipe detail"
+    elif dropped:
+        r["needs_review"] = f"removed {dropped} unverified quantities"
+    elif not any(re.search(r"\d", i) for i in r["ingredients"]):
+        r["needs_review"] = "source gives no amounts"
+    if r.get("meal") not in MEALS:
+        r["meal"] = "Other"
+    return r, dropped
+
+
+def from_page_text(d: Path, fx: dict, log: dict):
+    html = (d / "page.html").read_text(errors="replace")
+    text = page_text(html)
+    (d / "page.txt").write_text(text)
+    window = recipe_window(text)
+    r = ollama(PAGE_PROMPT.format(meals=MEALS, title=fx.get("page_title") or "", text=window),
+               num_ctx=8192, timeout=300)
+    r, dropped = finish(r, fx.get("page_title", "") + " " + window, fx.get("page_title") or fx["source_url"])
+    log["page_chars"], log["dropped"] = len(text), dropped
+    return r
+
+
+NUT_LABELS = ["Serving size", "Calories", "Fat", "Saturated fat", "Carbohydrates", "Fiber", "Sugar",
+              "Protein", "Cholesterol", "Sodium"]
+LD_NUT = {"servingSize": "Serving size", "calories": "Calories", "fatContent": "Fat",
+          "saturatedFatContent": "Saturated fat", "carbohydrateContent": "Carbohydrates",
+          "fiberContent": "Fiber", "sugarContent": "Sugar", "proteinContent": "Protein",
+          "cholesterolContent": "Cholesterol", "sodiumContent": "Sodium"}
+NUT_HINT = re.compile(r"nutrition|calories|kcal", re.I)
+
+
+def _clean_val(v):
+    return re.sub(r"\s+", " ", str(v)).strip()[:40]
+
+
+def nutrition_from_ld(ld):
+    """schema.org NutritionInformation -> {label: "405 kcal", ...} or None."""
+    n = ld.get("nutrition") or {}
+    if not isinstance(n, dict):
+        return None
+    out = {}
+    for k, label in LD_NUT.items():
+        v = n.get(k)
+        if v in (None, "") or not re.search(r"\d", str(v)):
+            continue
+        v = _clean_val(v)
+        if label == "Calories" and re.fullmatch(r"[\d.,]+", v):
+            v += " kcal"
+        out[label] = v
+    return out if any(k != "Serving size" for k in out) else None
+
+
+NUT_PROMPT = """Extract the nutrition facts stated in the text below. Use ONLY the text. Never estimate or calculate.
+Output JSON with exactly these keys: {keys}
+Each value is the number with its unit exactly as written (for example "405 kcal", "18 g", "843 mg"). Use null for anything not stated. If the text has no nutrition facts, every value is null.
+
+TEXT:
+{text}
+"""
+
+
+def extract_nutrition(corpus):
+    """Nutrition facts found in free text (page or video caption). Every number must appear in the text."""
+    m = NUT_HINT.search(corpus or "")
+    if not m:
+        return None
+    text = corpus[max(0, m.start() - 300): m.start() + 1500]
+    try:
+        j = ollama(NUT_PROMPT.format(keys=NUT_LABELS, text=text), num_ctx=4096, timeout=120)
+    except Exception:
+        return None
+    have, out = _nums(text), {}
+    for label in NUT_LABELS:
+        v = j.get(label)
+        if v in (None, ""):
+            continue
+        v = _clean_val(v)
+        if _nums(v) and _nums(v) <= have:
+            out[label] = v
+    return out if any(k != "Serving size" for k in out) else None
+
+
+def servings_number(s):
+    m = re.search(r"\d+", str(s or ""))
+    n = int(m.group()) if m else 0
+    return n if 1 <= n <= 100 else None
+
+
+SERV_PROMPT = """How many servings does this recipe make? Judge from the ingredient amounts and the kind of dish, as a typical home cook would serve it.
+Return JSON {{"servings": <whole number from 1 to 24>}}.
+Title: {title}
+Ingredients: {ing}
+"""
+
+
+def add_servings(r):
+    """servings_num = stated count if the source gave one, otherwise a model estimate (servings_inferred)."""
+    n = servings_number(r.get("servings"))
+    r["servings_inferred"] = False
+    if not n and r.get("ingredients"):
+        try:
+            j = ollama(SERV_PROMPT.format(title=r.get("title"), ing=r["ingredients"][:30]),
+                       num_ctx=2048, timeout=120)
+            n = servings_number(j.get("servings"))
+            r["servings_inferred"] = bool(n)
+        except Exception:
+            n = None
+    r["servings_num"] = n
+
+
+TIME_KEYS = ("prep_min", "cook_min", "total_min")
+TIME_HINT = re.compile(r"prep(?:aration)?\s*time|cook(?:ing)?\s*time|total\s*time|\bprep\s*:|\bcook\s*:", re.I)
+
+
+def iso_minutes(s):
+    """schema.org duration (PT1H30M) -> whole minutes or None."""
+    m = re.fullmatch(r"P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:\d+S)?)?", str(s or "").strip())
+    if not m:
+        return None
+    d, h, mi = (int(x or 0) for x in m.groups())
+    n = d * 1440 + h * 60 + mi
+    return n if 1 <= n <= 2880 else None
+
+
+TIMES_PROMPT = """Extract the preparation, cooking and total time stated in the text below. Use ONLY the text; never estimate or add up times.
+Output JSON {{"prep_min": int or null, "cook_min": int or null, "total_min": int or null}} with each value in whole minutes (1 hr 30 min = 90). Use null for anything not stated.
+
+TEXT:
+{text}
+"""
+
+
+def _time_ok(v, have):
+    if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= 2880:
+        return False
+    h, m = divmod(v, 60)
+    return str(v) in have or bool(h and not m and str(h) in have) or bool(h and m and str(h) in have and str(m) in have)
+
+
+def extract_times(corpus):
+    """Prep/cook/total minutes, only when the text labels them; numbers must appear in the text."""
+    out = {k: None for k in TIME_KEYS}
+    m = TIME_HINT.search(corpus or "")
+    if not m:
+        return out
+    text = corpus[max(0, m.start() - 100): m.start() + 600]
+    try:
+        j = ollama(TIMES_PROMPT.format(text=text), num_ctx=2048, timeout=120)
+    except Exception:
+        return out
+    have = _nums(text)
+    for k in out:
+        v = j.get(k)
+        if isinstance(v, float) and v.is_integer():
+            v = int(v)
+        if _time_ok(v, have):
+            out[k] = v
+    return out
+
+
+TAG_BAN = re.compile(r"\b(gluten|dairy|nut|soy|egg|lactose|sugar)[- ]?free\b|\bvegan\b|\bvegetarian\b|\bketo\b|\bpaleo\b|"
+                     r"\bhalal\b|\bkosher\b|allerg|healthy|\bdiet|low[- ]?(carb|fat|calorie|sodium)|high[- ]?protein|"
+                     r"whole30|\bquick\b|\beasy\b|\bfast\b|\bsimple\b|\d+[- ]?min", re.I)
+
+TAG_PROMPT = """Suggest 3 to 6 short tags that help find this recipe later. Lowercase, one or two words each.
+Good tags: the main ingredient (chicken, beans, avocado), the cuisine when it is clear (mexican, italian), the dish type (pasta, soup, salad, sandwich, bowl, casserole), the cooking method (grilled, baked, air fryer, one pot, slow cooker, no cook).
+Do NOT use diet or allergy labels (no vegan, vegetarian, gluten-free, dairy-free, keto), no health claims, and no time or difficulty words (quick, easy, 30 minute).
+Do not repeat the meal type ({meal}).
+Return JSON {{"tags": ["...", "..."]}}
+Title: {title}
+Ingredients: {ing}
+Directions: {steps}
+"""
+
+
+def clean_tags(xs, meal=None):
+    out = []
+    for t in xs or []:
+        t = re.sub(r"\s+", " ", re.sub(r"[^\w\s&'-]", "", str(t).lower())).strip()[:24]
+        if not t or t in out or (meal and t == str(meal).lower()) or TAG_BAN.search(t):
+            continue
+        out.append(t)
+    return out[:6]
+
+
+def gen_tags(r):
+    if not r.get("ingredients"):
+        return []
+    try:
+        j = ollama(TAG_PROMPT.format(meal=r.get("meal"), title=r.get("title"), ing=r["ingredients"][:25],
+                                     steps=" ".join(r.get("steps") or [])[:500]), num_ctx=2048, timeout=120)
+    except Exception:
+        return []
+    return clean_tags(j.get("tags"), r.get("meal"))
+
+
+def process(d: Path):
+    t0 = time.time()
+    fx = json.loads((d / "fetch.json").read_text())
+    log = {}
+    nut_corpus = None  # text searched for nutrition facts when the structured data has none
+    if fx["kind"] == "page":
+        if fx.get("has_jsonld") and not os.environ.get("FORCE_TEXT"):
+            r = from_jsonld(d)
+            r["meal"] = guess_meal(r["title"], r["ingredients"], r.pop("category_hint"))
+            r["needs_review"] = None
+        else:
+            r = from_page_text(d, fx, log)
+            nut_corpus = (d / "page.txt").read_text()
+    else:
+        video = d / "source.mp4"
+        transcript = transcribe(video)
+        log["transcribe_s"] = round(time.time() - t0, 1)
+        frames = extract_frames(video, d / "_frames")
+        scan = scan_frames(frames)
+        log["scan_s"] = round(time.time() - t0, 1)
+        (d / "ocr.json").write_text(json.dumps(scan, indent=1, ensure_ascii=False))
+        (d / "transcript.txt").write_text(transcript)
+        ocr = dedupe_text(s["text"] for s in scan)
+        r = ollama(STRUCT_PROMPT.format(meals=MEALS, caption=fx.get("caption", "")[:3000],
+                                        transcript=transcript[:4000], ocr=ocr[:4000]),
+                   num_ctx=8192, timeout=300)
+        corpus = " ".join([fx.get("caption", ""), transcript, ocr])
+        r, dropped = finish(r, corpus, fx.get("yt_title") or fx["source_url"])
+        nut_corpus = corpus
+        log["dropped"], log["evidence_words"] = dropped, len(corpus.split())
+        for f in (d / "_frames").glob("f_*.jpg"):
+            f.unlink()
+        (d / "_frames").rmdir()
+    no_times = not any(r.get(k) for k in TIME_KEYS)
+    if (not r.get("nutrition") or no_times) and nut_corpus is None and (d / "page.html").exists():
+        nut_corpus = page_text((d / "page.html").read_text(errors="replace"))
+    if not r.get("nutrition"):
+        r["nutrition"] = extract_nutrition(nut_corpus)
+    if no_times:
+        r.update(extract_times(nut_corpus))
+    for k in TIME_KEYS:
+        r.setdefault(k, None)
+    add_servings(r)
+    r["tags"] = gen_tags(r)
+    r.setdefault("favorite", False)
+    r.setdefault("notes", "")
+    cover = "thumbnail.jpg" if (d / "thumbnail.jpg").exists() else None
+    r.update(source_url=fx["source_url"], kind=fx["kind"], cover=cover,
+             has_video=(d / "source.mp4").exists(), processed_at=time.strftime("%Y-%m-%dT%H:%M:%S"))
+    (d / "recipe.json").write_text(json.dumps(r, indent=2, ensure_ascii=False))
+    log["total_s"] = round(time.time() - t0, 1)
+    return r, log
+
+
+if __name__ == "__main__":
+    for p in sys.argv[1:]:
+        try:
+            r, log = process(Path(p))
+            print("OK", p, log, flush=True)
+        except Exception as e:
+            print("FAIL", p, repr(e), flush=True)

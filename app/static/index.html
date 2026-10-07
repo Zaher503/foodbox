@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#fafaf7">
+<link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+<meta name="apple-mobile-web-app-title" content="Recipes">
+<title>Recipes</title>
+<style>
+:root{--bg:#fafaf7;--card:#fff;--ink:#1d1d1b;--mute:#76766f;--line:#e6e4dd;--acc:#c2410c;--warn:#b45309;--warnbg:#fef3c7;--s1:#fff1e6;--s2:#e4ecf6}
+@media (prefers-color-scheme:dark){:root{--bg:#141413;--card:#1e1e1c;--ink:#f1f0ea;--mute:#9a9990;--line:#33322e;--acc:#fb923c;--warn:#fcd34d;--warnbg:#3a2d0a;--s1:#2d2218;--s2:#1a2533}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-text-size-adjust:100%}
+button,input,select,textarea{font:inherit;color:inherit}
+header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 16px 0;padding-top:max(10px,env(safe-area-inset-top))}
+.row{display:flex;gap:8px;align-items:center}
+.row input[type=search],.row input[type=url]{flex:1;min-width:0;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+.btn{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:9px 12px;cursor:pointer;white-space:nowrap}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+.btn.danger{color:#b91c1c}
+.tabs{display:flex;gap:4px;overflow-x:auto;margin:10px -16px 0;padding:0 16px;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{flex:none;border:0;background:none;padding:8px 10px 10px;color:var(--mute);border-bottom:2px solid transparent;cursor:pointer}
+.tab.on{color:var(--ink);border-color:var(--acc);font-weight:600}
+.tab small{color:var(--mute);font-weight:400}
+main{padding:16px;max-width:1100px;margin:0 auto}
+.bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;color:var(--mute);font-size:14px}
+.bar select{border:0;background:none;color:var(--mute)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;cursor:pointer;text-align:left;padding:0;display:block;width:100%}
+.card .ph{aspect-ratio:4/5;background:var(--line) center/cover no-repeat;position:relative}
+.card .t{height:60px;padding:8px 10px 10px;font-size:14px;font-weight:600;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.flag{position:absolute;bottom:8px;left:8px;background:var(--warnbg);color:var(--warn);border-radius:99px;font-size:11px;padding:2px 8px;font-weight:600}
+.jobs{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:14px}
+.jobs div{display:flex;justify-content:space-between;gap:8px;padding:2px 0}
+.jobs span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.empty{color:var(--mute);text-align:center;padding:48px 0}
+#sheet{position:fixed;inset:0;z-index:10;background:var(--bg);overflow-y:auto;display:none;padding-bottom:env(safe-area-inset-bottom)}
+#sheet.on{display:block}
+.inner{max-width:720px;margin:0 auto;padding:0 16px 48px}
+.top{position:sticky;top:0;background:var(--bg);padding:max(10px,env(safe-area-inset-top)) 0 10px;display:flex;justify-content:space-between;gap:8px;z-index:2}
+.hero{width:100%;max-height:60vh;object-fit:cover;border-radius:14px;background:var(--line);display:block}
+h1{font-size:24px;line-height:1.2;margin:16px 0 8px}
+.meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.meta select{padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+.warn{background:var(--warnbg);color:var(--warn);padding:8px 12px;border-radius:10px;font-size:14px;margin-bottom:12px;display:flex;justify-content:space-between;gap:8px;align-items:center}
+h2{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:24px 0 8px}
+ul.ing{list-style:none;margin:0;padding:0}
+ul.ing li{padding:7px 0;border-bottom:1px solid var(--line)}
+.photos{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px}
+.photos figure{margin:0;flex:none;width:120px}
+.photos img{width:120px;height:120px;object-fit:cover;border-radius:10px;display:block}
+.photos figcaption{display:flex;gap:6px;font-size:12px;margin-top:4px}
+.photos figcaption button{border:0;background:none;color:var(--acc);padding:0;cursor:pointer;font-size:12px}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+textarea,.edit input{width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+textarea{min-height:140px}
+video{width:100%;max-height:70vh;border-radius:12px;background:#000;margin-top:12px}
+.mute{color:var(--mute)}.small{font-size:13px}
+.scaler{display:flex;align-items:center;gap:8px;margin:0 0 6px;color:var(--mute);font-size:14px}
+.stepper{display:flex;border:1px solid var(--line);border-radius:10px;background:var(--card);overflow:hidden}
+.stepper input{color:var(--ink);width:64px;border:0;background:none;padding:6px 8px;text-align:center;font-size:16px;-moz-appearance:textfield;appearance:textfield}
+.stepper input::-webkit-inner-spin-button,.stepper input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.arrows{display:flex;flex-direction:column;border-left:1px solid var(--line)}
+.arrows button{flex:1;border:0;background:none;padding:0 10px;font-size:9px;line-height:1;cursor:pointer;color:var(--mute)}
+.arrows button+button{border-top:1px solid var(--line)}
+b.q{color:var(--acc);font-weight:600}
+.nut{border:1px solid var(--line);border-radius:12px;background:var(--card);margin-top:24px;padding:0 14px}
+.nut summary{cursor:pointer;padding:12px 0;font-weight:600}
+.nut-t{width:100%;border-collapse:collapse}
+.nut-t td{padding:6px 0;border-bottom:1px solid var(--line)}
+.nut-t td:last-child{text-align:right}
+.nut-t input{width:130px;text-align:right;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.nut .actions{margin:8px 0 14px}
+.herow{position:relative}
+.heroedit{position:absolute;right:10px;bottom:10px;background:rgba(0,0,0,.62);color:#fff;border-color:transparent}
+.hmenu{position:absolute;right:10px;bottom:56px;display:flex;flex-direction:column;gap:2px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:6px;box-shadow:0 6px 24px rgba(0,0,0,.25);z-index:3}
+.hmenu[hidden]{display:none}
+.hmenu button{text-align:left;border:0;background:none;padding:10px 12px;border-radius:8px;cursor:pointer;white-space:nowrap}
+.hmenu button:hover{background:var(--bg)}
+.nohero{height:160px;display:flex;align-items:center;justify-content:center;color:var(--mute);background:var(--line);border-radius:14px}
+.cw{position:relative}
+.kebab{position:absolute;right:8px;bottom:68px;z-index:2;width:34px;height:34px;border:0;border-radius:99px;background:rgba(0,0,0,.38);color:#fff;font-size:20px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.kebab:hover{background:rgba(0,0,0,.6)}
+.cmenu{position:fixed;z-index:30;min-width:170px;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:6px;box-shadow:0 8px 28px rgba(0,0,0,.3)}
+.cmenu button{text-align:left;border:0;background:none;padding:10px 12px;border-radius:8px;cursor:pointer;white-space:nowrap}
+.cmenu button:hover{background:var(--bg)}
+.cmenu .danger{color:#b91c1c}
+ol.st{list-style:none;padding:0;margin:0;counter-reset:s}
+ol.st li{counter-increment:s;position:relative;padding:12px 14px 12px 50px;border-radius:12px;margin:6px 0}
+ol.st li:nth-child(odd){background:var(--s1)}
+ol.st li:nth-child(even){background:var(--s2)}
+ol.st.num li::before{content:counter(s);position:absolute;left:13px;top:12px;width:26px;height:26px;border-radius:99px;background:var(--acc);color:#fff;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center}
+ol.st.plain li{padding-left:14px}
+.dirhead{display:flex;justify-content:space-between;align-items:flex-end}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-bottom:6px}
+.seg button{border:0;background:var(--card);padding:4px 10px;font-size:12px;cursor:pointer;color:var(--mute)}
+.seg button.on{background:var(--acc);color:#fff}
+.chk{display:flex;align-items:center;gap:5px;margin-left:auto;cursor:pointer}
+.times{color:var(--mute);font-size:14px;margin:-4px 0 10px}
+.tagbar{display:flex;gap:6px;overflow-x:auto;padding:8px 0 10px;scrollbar-width:none}
+.tagbar::-webkit-scrollbar{display:none}
+.tagbar:empty{display:none}
+.tg{flex:none;border:1px solid var(--line);background:var(--card);border-radius:99px;padding:3px 10px;font-size:13px;cursor:pointer;color:var(--mute)}
+.tg.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.tagrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 12px}
+.chip{display:inline-flex;align-items:center;border:1px solid var(--line);background:var(--card);border-radius:99px;padding:3px 4px 3px 10px;font-size:13px}
+.chip span{cursor:pointer}
+.chip button{border:0;background:none;color:var(--mute);cursor:pointer;font-size:15px;line-height:1;padding:0 6px}
+.taginp{border:1px dashed var(--line);background:none;border-radius:99px;padding:3px 10px;font-size:16px;width:110px}
+.heart{position:absolute;top:6px;left:6px;z-index:2;width:34px;height:34px;border:0;border-radius:99px;background:rgba(0,0,0,.38);color:#fff;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.heart.on{color:#f87171}
+.heartbtn.on{color:#dc2626;border-color:#dc2626}
+textarea.notes{min-height:90px}
+a{color:var(--acc)}
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <input type="search" id="q" placeholder="Search recipes" autocomplete="off">
+    <button class="btn pri" id="addBtn">+ Add</button>
+  </div>
+  <div class="row" id="addRow" style="display:none;margin-top:8px">
+    <input type="url" id="addUrl" placeholder="Paste a link">
+    <button class="btn pri" id="addGo">Save</button>
+  </div>
+  <nav class="tabs" id="tabs"></nav>
+  <div class="tagbar" id="tagbar"></div>
+</header>
+<main>
+  <div id="jobs"></div>
+  <div class="bar"><span id="count"></span>
+    <select id="sort"><option value="new">Newest</option><option value="az">A–Z</option></select></div>
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty" hidden>Nothing here yet.</div>
+</main>
+<div id="sheet"><div class="inner" id="detail"></div></div>
+<datalist id="taglist"></datalist>
+<input type="file" id="file" accept="image/*" hidden>
+<input type="file" id="coverFile" accept="image/*" hidden>
+<input type="file" id="coverCam" accept="image/*" capture="environment" hidden>
+
+<script>
+const MEALS=["Breakfast","Lunch","Dinner","Snack","Dessert","Other"];
+const $=s=>document.querySelector(s);
+const el=(t,p={},...k)=>{const e=document.createElement(t);for(const[a,v]of Object.entries(p)){if(a==="class")e.className=v;else if(a.startsWith("on"))e[a]=v;else if(v!==false&&v!=null)e.setAttribute(a,v===true?"":v)}for(const c of k.flat())if(c!=null)e.append(c);return e};
+const api=async(u,o={})=>{const r=await fetch(u,{...o,headers:{"Content-Type":"application/json",...(o.headers||{})}});if(!r.ok)throw new Error((await r.text()).slice(0,200));return r.json()};
+const store={get:k=>{try{return localStorage.getItem(k)}catch{return null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch{}}};
+let tagSel=[],tab="All",sort=store.get("sort")||"new",current=null,data={counts:{},review:0,recipes:[]};
+
+const NUT_LABELS=["Serving size","Calories","Fat","Saturated fat","Carbohydrates","Fiber","Sugar","Protein","Cholesterol","Sodium"];
+const FC="½¼¾⅓⅔⅛⅜⅝⅞",FR={"½":.5,"¼":.25,"¾":.75,"⅓":1/3,"⅔":2/3,"⅛":.125,"⅜":.375,"⅝":.625,"⅞":.875};
+const NUM=`(?:\\d+\\s+\\d+\\s*[/⁄]\\s*\\d+|\\d+\\s*[/⁄]\\s*\\d+|\\d+\\s*[${FC}]|[${FC}]|\\d+(?:\\.\\d+)?)`;
+const QTY=new RegExp(`^(\\s*)(${NUM})(?:(\\s*(?:-|–|to)\\s*)(${NUM}))?(?![\\d/⁄-])`);
+function toNum(s){
+  s=s.trim();let m;
+  if(m=s.match(/^(\d+)\s+(\d+)\s*[\/⁄]\s*(\d+)$/))return +m[1]+m[2]/m[3];
+  if(m=s.match(/^(\d+)\s*[\/⁄]\s*(\d+)$/))return m[1]/m[2];
+  if(m=s.match(new RegExp(`^(\\d*)\\s*([${FC}])$`)))return(+m[1]||0)+FR[m[2]];
+  return parseFloat(s);
+}
+function fmt(v){
+  const w=Math.floor(v+1e-9),fr=v-w;
+  const T=[[0,""],[1/8,"1/8"],[1/4,"1/4"],[1/3,"1/3"],[3/8,"3/8"],[1/2,"1/2"],[5/8,"5/8"],[2/3,"2/3"],[3/4,"3/4"],[7/8,"7/8"],[1,""]];
+  let best=T[0],bd=9;for(const t of T){const d=Math.abs(fr-t[0]);if(d<bd){bd=d;best=t}}
+  if(bd<0.03){const W=w+(best[0]===1?1:0);return best[1]?(W?W+" ":"")+best[1]:String(W)}
+  return String(Math.round(v*100)/100);
+}
+// scale the leading quantity of a line ("1 1/2 cups flour", "2-3 tbsp oil"); amounts in parentheses are left alone
+function scaleText(s,m){
+  if(m===1)return[s];
+  const x=QTY.exec(s);if(!x)return[s];
+  const a=toNum(x[2]);if(!isFinite(a))return[s];
+  let out=fmt(a*m);
+  if(x[4]){const b=toNum(x[4]);if(!isFinite(b))return[s];out+=x[3]+fmt(b*m)}
+  return[x[1],el("b",{class:"q"},out),s.slice(x[0].length)];
+}
+function nutBox(r){
+  const body=el("div"),box=el("details",{class:"nut"},el("summary",{},"Nutrition facts"),body);
+  const view=()=>body.replaceChildren(
+    el("table",{class:"nut-t"},Object.entries(r.nutrition).map(([k,v])=>el("tr",{},el("td",{},k),el("td",{},v)))),
+    el("p",{class:"mute small"},"As listed by the source, per serving unless it says otherwise. Not changed by the scale."),
+    el("div",{class:"actions"},el("button",{class:"btn",onclick:()=>edit()},"Edit")));
+  const edit=()=>{
+    const keys=[...new Set([...NUT_LABELS,...Object.keys(r.nutrition)])];
+    const ins=keys.map(k=>[k,el("input",{value:r.nutrition[k]||"",placeholder:"—"})]);
+    body.replaceChildren(el("table",{class:"nut-t"},ins.map(([k,i])=>el("tr",{},el("td",{},k),el("td",{},i)))),
+      el("p",{class:"mute small"},"Include the unit, e.g. 405 kcal or 18 g. Clear a box to remove it."),
+      el("div",{class:"actions"},el("button",{class:"btn pri",onclick:async()=>{
+        const res=await api("/api/recipes/"+r.id,{method:"PATCH",body:JSON.stringify({nutrition:Object.fromEntries(ins.map(([k,i])=>[k,i.value]))})});
+        current=res;if(!res.nutrition){draw(false);return}r.nutrition=res.nutrition;view()}},"Save"),
+        el("button",{class:"btn",onclick:()=>view()},"Cancel")));
+  };
+  view();return box;
+}
+// shrink big phone photos (also applies EXIF rotation); falls back to the original file if the browser cannot decode it
+async function prepImage(file,max=1800){
+  try{
+    const bmp=await createImageBitmap(file,{imageOrientation:"from-image"});
+    const k=Math.min(1,max/Math.max(bmp.width,bmp.height));
+    const c=document.createElement("canvas");c.width=Math.round(bmp.width*k);c.height=Math.round(bmp.height*k);
+    c.getContext("2d").drawImage(bmp,0,0,c.width,c.height);
+    const blob=await new Promise(res=>c.toBlob(res,"image/jpeg",.88));
+    if(blob)return{blob,name:"photo.jpg"};
+  }catch{}
+  return{blob:file,name:file.name};
+}
+async function setCover(file){
+  if(!file||!current)return;
+  const id=current.id,box=$("#detail");box.style.opacity=".5";
+  try{
+    const{blob,name}=await prepImage(file);
+    const fd=new FormData();fd.append("file",blob,name);
+    const up=await fetch(`/api/recipes/${id}/shots`,{method:"POST",body:fd});
+    if(!up.ok)throw new Error((await up.text()).slice(0,120));
+    const{name:shot}=await up.json();
+    current=await api("/api/recipes/"+id,{method:"PATCH",body:JSON.stringify({cover:"shots/"+shot})});
+    draw(false);
+  }catch(e){alert("Could not set the cover photo: "+e.message)}
+  finally{box.style.opacity=""}
+}
+function heroBox(r){
+  const menu=el("div",{class:"hmenu",hidden:true},
+    el("button",{onclick:()=>$("#coverFile").click()},"🖼 Choose from device"),
+    el("button",{onclick:()=>$("#coverCam").click()},"📷 Take a photo"),
+    r.has_thumb&&r.cover!=="thumbnail.jpg"?el("button",{onclick:async()=>{
+      current=await api("/api/recipes/"+r.id,{method:"PATCH",body:JSON.stringify({cover:"thumbnail.jpg"})});draw(false)}},"↩ Use the original picture"):null);
+  return el("div",{class:"herow"},
+    r.cover?el("img",{class:"hero",src:`/files/${r.id}/${r.cover}`,alt:""}):el("div",{class:"nohero"},"No cover photo yet"),
+    el("button",{class:"btn heroedit",onclick:()=>{menu.hidden=!menu.hidden}},r.cover?"✎ Change photo":"+ Add photo"),menu);
+}
+$("#coverFile").onchange=e=>{const f=e.target.files[0];e.target.value="";setCover(f)};
+$("#coverCam").onchange=e=>{const f=e.target.files[0];e.target.value="";setCover(f)};
+// 3-dot menu on each recipe card; add new options by appending to `items`
+let cm=null;
+function closeMenu(){if(cm){cm.remove();cm=null}}
+function cardMenu(btn,r){
+  const same=cm&&cm._for===btn;closeMenu();if(same)return;
+  const items=[
+    ["Edit",()=>open(r.id,true)],
+    ["Open source ↗",()=>window.open(r.source_url,"_blank","noopener")],
+    ["Delete",async()=>{if(confirm(`Delete "${r.title||"this recipe"}"? It moves to the trash folder on the server.`)){await api("/api/recipes/"+r.id,{method:"DELETE"});load()}},true]];
+  cm=el("div",{class:"cmenu"},items.map(([t,fn,danger])=>el("button",{class:danger?"danger":"",onclick:()=>{closeMenu();fn()}},t)));
+  cm._for=btn;document.body.append(cm);
+  const b=btn.getBoundingClientRect(),w=cm.offsetWidth,h=cm.offsetHeight;
+  cm.style.left=Math.max(8,Math.min(b.left,innerWidth-w-8))+"px";
+  cm.style.top=(b.bottom+h+8>innerHeight?Math.max(8,b.top-h-4):b.bottom+4)+"px";
+}
+document.addEventListener("click",e=>{if(cm&&!cm.contains(e.target))closeMenu()});
+addEventListener("keydown",e=>{if(e.key==="Escape")closeMenu()});
+addEventListener("scroll",closeMenu,true);
+const UNITS=[[/^fl\.?\s*oz\b\.?/i,29.5735,"ml"],[/^cups?\b/i,240,"ml"],[/^(tablespoons?|tbsps?|tbs)\b\.?/i,15,"ml"],
+  [/^(teaspoons?|tsps?)\b\.?/i,5,"ml"],[/^(ounces?|oz)\b\.?/i,28.3495,"g"],[/^(pounds?|lbs?)\b\.?/i,453.592,"g"]];
+function unitAt(rest){
+  const sp=/^\s*/.exec(rest)[0].length,t=rest.slice(sp);
+  for(const[re,f,u]of UNITS){const x=re.exec(t);if(x)return{f,u,len:sp+x[0].length}}
+  return null;
+}
+function roundM(v,u){return u==="g"?(v<100?Math.round(v):Math.round(v/5)*5):(v<10?Math.round(v*2)/2:v<100?Math.round(v):Math.round(v/5)*5)}
+function metricText(vals,u,sep){
+  const vs=vals.map(v=>roundM(v,u));
+  if(Math.max(...vs)>=1000)return vs.map(v=>+(v/1000).toFixed(2)).join(sep)+(u==="g"?" kg":" L");
+  return vs.join(sep)+" "+u;
+}
+// "(15 oz)" style can sizes -> "(425 g)"; never scaled
+function parenMetric(s){
+  return s.replace(/\((\d+(?:\.\d+)?)\s*(fl\.?\s*oz|ounces?|oz|pounds?|lbs?|cups?)\)/gi,(m,n,u)=>{const x=unitAt(u);return x?"("+metricText([n*x.f],x.u,"-")+")":m});
+}
+const tempText=(s,metric)=>metric?s.replace(/(\d{3})\s*°\s*F\b/g,(m,f)=>Math.round((f-32)*5/9/5)*5+"°C"):s;
+// one ingredient line: scale the leading quantity, optionally convert US units to metric
+function lineNodes(s,m,metric){
+  const x=QTY.exec(s),plain=()=>[metric?parenMetric(s):s];
+  if(!x)return plain();
+  const a=toNum(x[2]),b=x[4]?toNum(x[4]):null;
+  if(!isFinite(a)||(b!==null&&!isFinite(b)))return plain();
+  const rest=s.slice(x[0].length),u=metric?unitAt(rest):null;
+  if(m===1&&!u)return plain();
+  let txt,after=rest;
+  if(u){txt=metricText(b===null?[a*m*u.f]:[a*m*u.f,b*m*u.f],u.u,x[3]||"-");after=rest.slice(u.len)}
+  else txt=fmt(a*m)+(b!==null?x[3]+fmt(b*m):"");
+  return[x[1],el("b",{class:"q"},txt),metric?parenMetric(after):after];
+}
+const fmtMin=n=>n>=60?Math.floor(n/60)+" hr"+(n%60?" "+n%60+" min":""):n+" min";
+function timesLine(r){
+  const b=[];
+  if(r.prep_min)b.push("Prep "+fmtMin(r.prep_min));
+  if(r.cook_min)b.push("Cook "+fmtMin(r.cook_min));
+  const t=r.total_min||(r.prep_min&&r.cook_min?r.prep_min+r.cook_min:0);
+  if(t)b.push("Total "+fmtMin(t));
+  return b.length?el("div",{class:"times"},b.join(" · ")):null;
+}
+function tagEditor(r){
+  const row=el("div",{class:"tagrow"}),inp=el("input",{class:"taginp",placeholder:"+ tag",list:"taglist",maxlength:"24"});
+  const paint=()=>row.replaceChildren(...(r.tags||[]).map(t=>el("span",{class:"chip"},
+    el("span",{onclick:()=>{tagSel=[t];close()}},t),el("button",{"aria-label":"Remove "+t,onclick:()=>save((r.tags||[]).filter(x=>x!==t))},"×"))),inp);
+  const save=async tags=>{const res=await api("/api/recipes/"+r.id,{method:"PATCH",body:JSON.stringify({tags})});current=res;r.tags=res.tags;paint()};
+  const add=async()=>{const t=inp.value.trim();inp.value="";if(t)await save([...(r.tags||[]),t]);return t};
+  inp.onkeydown=async e=>{if(e.key==="Enter"||e.key===","){e.preventDefault();if(await add())inp.focus()}};
+  inp.onblur=add;
+  paint();return row;
+}
+function notesBox(r){
+  const ta=el("textarea",{class:"notes",placeholder:"Your notes: substitutions, tweaks, what everyone thought…"},r.notes||""),st=el("div",{class:"mute small"});
+  let saved=r.notes||"";
+  ta.oninput=()=>{st.textContent=""};
+  ta.onblur=async()=>{
+    if(ta.value===saved)return;st.textContent="Saving…";
+    try{const res=await api("/api/recipes/"+r.id,{method:"PATCH",body:JSON.stringify({notes:ta.value})});current=res;saved=res.notes||"";r.notes=saved;st.textContent="Saved"}
+    catch(e){st.textContent="Not saved: "+e.message}
+  };
+  return el("div",{},ta,st);
+}
+function renderTags(){
+  const cnt=Object.fromEntries((data.tags||[]).map(t=>[t.tag,t.n]));
+  const names=[...new Set([...tagSel,...(data.tags||[]).map(t=>t.tag)])];
+  $("#tagbar").replaceChildren(...names.map(t=>el("button",{class:"tg"+(tagSel.includes(t)?" on":""),
+    onclick:()=>{tagSel=tagSel.includes(t)?tagSel.filter(x=>x!==t):[...tagSel,t];load()}},t," ",cnt[t]??0)));
+  $("#taglist").replaceChildren(...(data.all_tags||[]).map(t=>el("option",{value:t})));
+}
+function renderTabs(){
+  const n=data.counts,total=Object.values(n).reduce((a,b)=>a+b,0);
+  const items=[["All",total],["Favorites",data.favorites||0],...MEALS.map(m=>[m,n[m]||0]),["Review",data.review]];
+  $("#tabs").replaceChildren(...items.map(([k,c])=>el("button",{class:"tab"+(k===tab?" on":""),onclick:()=>{tab=k;load()}},k==="Review"?"Needs review":k==="Favorites"?"♥ Favorites":k," ",el("small",{},c))));
+}
+async function load(){
+  const p=new URLSearchParams({sort,q:$("#q").value});
+  if(tab!=="All")p.set("meal",tab);
+  if(tagSel.length)p.set("tag",tagSel.join(","));
+  data=await api("/api/recipes?"+p);
+  renderTabs();renderTags();
+  $("#count").textContent=data.recipes.length+" recipe"+(data.recipes.length===1?"":"s");
+  $("#empty").hidden=data.recipes.length>0;
+  $("#grid").replaceChildren(...data.recipes.map(r=>el("div",{class:"cw"},
+    el("button",{class:"card",onclick:()=>open(r.id)},
+      el("div",{class:"ph",style:r.cover?`background-image:url("/files/${r.id}/${r.cover}")`:""},r.needs_review?el("span",{class:"flag"},"Review"):null),
+      el("div",{class:"t"},r.title||"Untitled")),
+    el("button",{class:"kebab","aria-label":"Options",title:"Options",onclick:e=>{e.stopPropagation();cardMenu(e.currentTarget,r)}},"⋮"),
+    el("button",{class:"heart"+(r.favorite?" on":""),"aria-label":"Favorite",title:"Favorite",onclick:async e=>{e.stopPropagation();await api("/api/recipes/"+r.id,{method:"PATCH",body:JSON.stringify({favorite:!r.favorite})});load()}},r.favorite?"♥":"♡"))));
+}
+async function jobs(){
+  const j=(await api("/api/jobs")).filter(x=>x.status!=="failed");
+  const box=$("#jobs");
+  box.replaceChildren(...(j.length?[el("div",{class:"jobs"},...j.map(x=>el("div",{},
+    el("span",{},x.url),el("span",{},x.status==="failed"?"failed":x.status==="running"?"processing…":"waiting"))))]:[]));
+  return j.some(x=>x.status!=="failed");
+}
+let poll=null;
+function startPoll(){clearInterval(poll);poll=setInterval(async()=>{const busy=await jobs().catch(()=>false);await load().catch(()=>{});if(!busy)clearInterval(poll)},4000)}
+
+async function open(id,editing=false){
+  current=await api("/api/recipes/"+id);
+  history.replaceState(null,"","#"+id);
+  draw(editing);
+  $("#sheet").classList.add("on");$("#sheet").scrollTop=0;
+}
+function close(){$("#sheet").classList.remove("on");history.replaceState(null,"","#");load()}
+function draw(editing){
+  const r=current,f=n=>`/files/${r.id}/${n}`,d=$("#detail");
+  const sel=el("select",{onchange:async e=>{current=await api("/api/recipes/"+r.id,{method:"PATCH",body:JSON.stringify({meal:e.target.value})})}},
+    MEALS.map(m=>el("option",{value:m,selected:m===r.meal},m)));
+  const kids=[el("div",{class:"top"},el("button",{class:"btn",onclick:close},"← Back"),
+    el("button",{class:"btn",onclick:()=>draw(!editing)},editing?"Cancel":"Edit"))];
+  if(editing){if(r.cover)kids.push(el("img",{class:"hero",src:f(r.cover),alt:""}))}else kids.push(heroBox(r));
+  if(editing){
+    const t=el("input",{value:r.title||""}),sv=el("input",{value:r.servings||"",placeholder:"Servings"}),sn=el("input",{type:"number",min:"1",max:"100",value:r.servings_num||"",placeholder:"e.g. 4"});
+    const tin=(v,ph)=>el("input",{type:"number",min:"1",max:"2880",value:v||"",placeholder:ph}),pi=tin(r.prep_min,"Prep"),ci=tin(r.cook_min,"Cook"),ti=tin(r.total_min,"Total");
+    const ing=el("textarea",{},(r.ingredients||[]).join("\n")),st=el("textarea",{style:"min-height:240px"},(r.steps||[]).join("\n"));
+    kids.push(el("div",{class:"edit"},el("h2",{},"Title"),t,el("h2",{},"Servings (as the source states it)"),sv,el("h2",{},"Number of servings (used by the scaler)"),sn,el("h2",{},"Times in minutes (prep / cook / total)"),el("div",{class:"row"},pi,ci,ti),el("h2",{},"Ingredients (one per line)"),ing,el("h2",{},"Steps (one per line)"),st,
+      el("div",{class:"actions"},el("button",{class:"btn pri",onclick:async()=>{
+        current=await api("/api/recipes/"+r.id,{method:"PATCH",body:JSON.stringify({title:t.value,servings:sv.value,...(sn.value!==String(r.servings_num||"")?{servings_num:sn.value}:{}),prep_min:pi.value,cook_min:ci.value,total_min:ti.value,ingredients:ing.value.split("\n"),steps:st.value.split("\n"),reviewed:true})});draw(false)}},"Save"))));
+    d.replaceChildren(...kids);return;
+  }
+  let mult=1,metric=store.get("metric")==="1",numbered=store.get("numbered")!=="0";
+  const heartTxt=()=>r.favorite?"♥ Favorite":"♡ Favorite";
+  const heart=el("button",{class:"btn heartbtn"+(r.favorite?" on":""),onclick:async()=>{
+    const res=await api("/api/recipes/"+r.id,{method:"PATCH",body:JSON.stringify({favorite:!r.favorite})});
+    current=res;r.favorite=res.favorite;heart.className="btn heartbtn"+(r.favorite?" on":"");heart.textContent=heartTxt()}},heartTxt());
+  const servEl=el("span"),ul=el("ul",{class:"ing"}),ol=el("ol",{class:"st num"});
+  const paint=()=>{
+    ul.replaceChildren(...(r.ingredients||[]).map(i=>el("li",{},lineNodes(i,mult,metric))));
+    ol.className="st "+(numbered?"num":"plain");
+    ol.replaceChildren(...(r.steps||[]).map(st=>el("li",{},tempText(st,metric))));
+    servEl.replaceChildren(...(r.servings?["Serves ",...scaleText(r.servings,mult)]
+      :r.servings_num?["Serves "+fmt(r.servings_num*mult)+(r.servings_inferred?" (estimated)":"")]:[]));
+  };
+  const inp=el("input",{type:"number",inputmode:"decimal",step:"any",min:"0.25",max:"100",value:"1","aria-label":"Recipe multiplier"});
+  inp.oninput=()=>{const v=parseFloat(inp.value);if(v>0&&v<=100){mult=v;paint()}};
+  const step=dir=>{let v=parseFloat(inp.value);if(!(v>0))v=1;
+    v=dir>0?(v<1?Math.min(1,v*2):Math.min(100,Math.floor(v+1e-9)+1)):(v<=1?Math.max(.25,v/2):Math.ceil(v-1e-9)-1);
+    v=Math.round(v*100)/100;inp.value=v;mult=v;paint()};
+  const mcb=el("input",{type:"checkbox"});mcb.checked=metric;
+  mcb.onchange=()=>{metric=mcb.checked;store.set("metric",metric?"1":"0");paint()};
+  const scaler=el("div",{class:"scaler"},"Scale",el("div",{class:"stepper"},inp,el("div",{class:"arrows"},
+    el("button",{type:"button","aria-label":"Increase",onclick:()=>step(1)},"▲"),
+    el("button",{type:"button","aria-label":"Decrease",onclick:()=>step(-1)},"▼"))),"× recipe",el("label",{class:"chk"},mcb,"Metric"));
+  paint();
+  kids.push(el("h1",{},r.title||"Untitled"));
+  kids.push(el("div",{class:"meta"},sel,servEl,heart,
+    el("a",{href:r.source_url,target:"_blank",rel:"noopener noreferrer"},"Source ↗")));
+  {const tl=timesLine(r);if(tl)kids.push(tl)}
+  kids.push(tagEditor(r));
+  if(r.needs_review)kids.push(el("div",{class:"warn"},el("span",{},r.needs_review),
+    el("span",{},el("button",{class:"btn",onclick:async()=>{await api(`/api/recipes/${r.id}/reprocess`,{method:"POST"});close();jobs();startPoll()}},"Retry"),
+    " ",el("button",{class:"btn",onclick:async()=>{current=await api("/api/recipes/"+r.id,{method:"PATCH",body:JSON.stringify({reviewed:true})});draw(false)}},"Dismiss"))));
+  if(r.ingredients?.length)kids.push(el("h2",{},"Ingredients"),scaler,ul);
+  if(r.steps?.length){
+    const seg=el("div",{class:"seg"});
+    const segPaint=()=>seg.replaceChildren(
+      el("button",{class:numbered?"on":"",onclick:()=>{numbered=true;store.set("numbered","1");segPaint();paint()}},"Numbered"),
+      el("button",{class:numbered?"":"on",onclick:()=>{numbered=false;store.set("numbered","0");segPaint();paint()}},"Plain"));
+    segPaint();
+    kids.push(el("div",{class:"dirhead"},el("h2",{},"Directions"),seg),ol);
+  }
+  kids.push(el("h2",{},"Personal notes"),notesBox(r));
+  if(r.nutrition&&Object.keys(r.nutrition).length)kids.push(nutBox(r));
+  const links=[];
+  if(r.has_video)links.push(el("button",{class:"btn",onclick:e=>{e.target.replaceWith(el("video",{src:f("source.mp4"),controls:true,autoplay:true,playsinline:true}))}},"▶ Original video"));
+  if(r.has_page)links.push(el("a",{class:"btn",href:f("page.html"),target:"_blank",rel:"noopener"},"Saved page"));
+  links.push(el("button",{class:"btn",onclick:()=>$("#file").click()},"+ Add photo"));
+  kids.push(el("div",{class:"actions"},links));
+  if(r.photos?.length){
+    kids.push(el("h2",{},"Photos"),el("div",{class:"photos"},r.photos.map(n=>el("figure",{},el("img",{src:f("shots/"+n),loading:"lazy",alt:""}),
+      el("figcaption",{},el("button",{onclick:async()=>{current=await api("/api/recipes/"+r.id,{method:"PATCH",body:JSON.stringify({cover:"shots/"+n})});draw(false)}},"Make cover"),
+      el("button",{onclick:async()=>{await api(`/api/recipes/${r.id}/shots/${n}`,{method:"DELETE"});current=await api("/api/recipes/"+r.id);draw(false)}},"Delete"))))));
+  }
+  kids.push(el("div",{class:"actions",style:"margin-top:32px"},el("button",{class:"btn danger",onclick:async()=>{
+    if(confirm("Delete this recipe? It moves to the trash folder on the server.")){await api("/api/recipes/"+r.id,{method:"DELETE"});close()}}},"Delete recipe")));
+  d.replaceChildren(...kids);
+}
+$("#file").onchange=async e=>{
+  const fl=e.target.files[0];if(!fl||!current)return;
+  const fd=new FormData();fd.append("file",fl);
+  const r=await fetch(`/api/recipes/${current.id}/shots`,{method:"POST",body:fd});
+  e.target.value="";
+  if(!r.ok){alert("Upload failed: "+(await r.text()).slice(0,120));return}
+  current=await api("/api/recipes/"+current.id);draw(false);
+};
+$("#addBtn").onclick=()=>{const r=$("#addRow");r.style.display=r.style.display==="none"?"flex":"none";$("#addUrl").focus()};
+$("#addGo").onclick=async()=>{
+  const u=$("#addUrl").value.trim();if(!u)return;
+  try{await api("/api/ui/add",{method:"POST",body:JSON.stringify({url:u})});$("#addUrl").value="";$("#addRow").style.display="none";await jobs();startPoll()}
+  catch(e){alert(e.message)}
+};
+let tm;$("#q").oninput=()=>{clearTimeout(tm);tm=setTimeout(load,250)};
+$("#sort").value=sort;$("#sort").onchange=e=>{sort=e.target.value;store.set("sort",sort);load()};
+addEventListener("popstate",()=>{if(!location.hash.slice(1))$("#sheet").classList.remove("on")});
+(async()=>{await load();if(await jobs())startPoll();const h=location.hash.slice(1);if(h)open(h).catch(()=>{})})();
+</script>
+</body>
+</html>
