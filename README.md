@@ -73,3 +73,7 @@ scripts/            Windows helper to send links
 ## Known limits
 
 Amounts exist only if the source states them. Instagram is not supported. Whisper can mishear cooking words. Reprocessing a recipe discards manual edits except favorite, notes and tags. Tags and servings estimates are model guesses; check them.
+
+## License
+
+[MIT](LICENSE). The dependencies (yt-dlp, faster-whisper, Ollama, the models you pull, etc.) have their own licenses.
