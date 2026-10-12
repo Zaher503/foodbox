@@ -135,8 +135,10 @@ def _get_browser(url: str) -> bytes:
         out = Path(td) / "page.html"
         try:
             xvfb = ["xvfb-run", "-a"] if shutil.which("xvfb-run") else []
+            # Non-root Chromium crashes (crashpad) unless it has writable XDG dirs
+            env = {**os.environ, "XDG_CONFIG_HOME": td, "XDG_CACHE_HOME": td}
             subprocess.run([*xvfb, sys.executable, str(here / "browser_fetch.py"), url, str(out)],
-                           check=True, timeout=120, capture_output=True)
+                           check=True, timeout=120, capture_output=True, env=env)
         except Exception:
             raise RuntimeError("site refused the download (HTTP 403, browser fallback also blocked)") from None
         return out.read_bytes()[:MAX_BYTES]

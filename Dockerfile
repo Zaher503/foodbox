@@ -11,7 +11,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 # ffmpeg for audio/frames, xvfb for the headed Chromium fallback
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg xvfb ca-certificates curl \
+    && apt-get install -y --no-install-recommends ffmpeg xvfb xauth ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
