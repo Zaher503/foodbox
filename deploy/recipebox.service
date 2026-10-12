@@ -4,9 +4,9 @@ After=network-online.target docker.service
 
 [Service]
 User=foodbox
-WorkingDirectory=/opt/foodbox/app
-EnvironmentFile=/opt/foodbox/.env
-ExecStart=/opt/foodbox/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8800
+WorkingDirectory=/opt/foodbox
+Environment=FOODBOX_DATA=/srv/recipebox
+ExecStart=/opt/foodbox/venv/bin/uvicorn --app-dir app main:app --host 0.0.0.0 --port 8800
 Restart=on-failure
 
 [Install]

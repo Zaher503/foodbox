@@ -12,25 +12,46 @@ from pathlib import Path
 
 import requests
 
-OLLAMA = "http://127.0.0.1:11434/api/generate"
-VL = "qwen2.5vl:7b"
+OLLAMA = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/") + "/api/generate"
+VL = os.environ.get("FOODBOX_MODEL") or os.environ.get("RECIPE_VL") or "gemma4:e4b"  # main model; env overrides for A/B tests
 MEALS = ["Breakfast", "Lunch", "Dinner", "Snack", "Dessert", "Other"]
 
 
 def _preload_cuda():
+    """Make the pip-installed CUDA libs (nvidia-cublas/cudnn) findable by CTranslate2."""
     import nvidia.cublas, nvidia.cudnn
     for pkg in (nvidia.cublas, nvidia.cudnn):
-        for so in sorted(glob.glob(os.path.join(list(pkg.__path__)[0], "lib", "*.so*"))):
+        root = list(pkg.__path__)[0]
+        if os.name == "nt":
+            d = os.path.join(root, "bin")
+            os.add_dll_directory(d)
+            os.environ["PATH"] = d + os.pathsep + os.environ["PATH"]
+            continue
+        for so in sorted(glob.glob(os.path.join(root, "lib", "*.so*"))):
             try:
                 ctypes.CDLL(so, mode=ctypes.RTLD_GLOBAL)
             except OSError:
                 pass
 
 
-def transcribe(video: Path) -> str:
-    _preload_cuda()
+def _whisper():
+    """Whisper on the GPU when one is visible, otherwise a smaller int8 model on the CPU."""
+    dev = os.environ.get("FOODBOX_WHISPER_DEVICE", "auto")
+    if dev == "auto":
+        try:
+            import ctranslate2
+            dev = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+        except Exception:
+            dev = "cpu"
     from faster_whisper import WhisperModel
-    m = WhisperModel("large-v3", device="cuda", compute_type="int8_float16")
+    if dev == "cuda":
+        _preload_cuda()
+        return WhisperModel(os.environ.get("FOODBOX_WHISPER_MODEL", "large-v3"), device="cuda", compute_type="int8_float16")
+    return WhisperModel(os.environ.get("FOODBOX_WHISPER_MODEL", "small"), device="cpu", compute_type="int8")
+
+
+def transcribe(video: Path) -> str:
+    m = _whisper()
     import numpy as np
     raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000",
                           "-f", "f32le", "-"], check=True, capture_output=True).stdout
@@ -55,10 +76,13 @@ def extract_frames(video: Path, out: Path, every=2.0, width=768):
 
 def ollama(prompt, images=None, num_ctx=8192, fmt="json", timeout=300):
     body = {"model": VL, "prompt": prompt, "stream": False, "format": fmt,
-            "options": {"num_ctx": num_ctx, "temperature": 0.1}}
+            "options": {"num_ctx": num_ctx, "temperature": 0.1}, "think": False}  # no reasoning tokens: faster, JSON stays clean
     if images:
         body["images"] = [base64.b64encode(Path(i).read_bytes()).decode() for i in images]
     r = requests.post(OLLAMA, json=body, timeout=timeout)
+    if r.status_code == 400 and "think" in r.text:  # model has no thinking switch
+        body.pop("think")
+        r = requests.post(OLLAMA, json=body, timeout=timeout)
     r.raise_for_status()
     return json.loads(r.json()["response"])
 
@@ -99,8 +123,11 @@ Rules:
 - NEVER guess. Every number, quantity, time and temperature must appear in the sources below. If a quantity is not stated, write the ingredient name alone with no amount. Do not add ingredients or steps that are not stated or clearly named in the sources.
 - If the sources contain no recipe details at all, return empty "ingredients" and "steps" lists.
 - Ignore brand names and text printed on product packaging.
-- Ingredients: "quantity unit item" exactly as given; if no quantity is given write the item alone.
+- Ingredients: "quantity unit item, preparation" exactly as given; if no quantity is given write the item alone.
+- Keep the preparation of every ingredient: size/cut and state ("1.5 lbs boneless skinless chicken thighs, cut into 1 inch pieces", "5 cloves garlic, grated", "1 onion, diced"). Take it from any source (caption list, spoken words, on-screen text).
+- If the CAPTION contains an ingredient list with amounts, use it as the base: keep every line with its amount and prep note, and fill in a missing ingredient name from the transcript (a line like "1.5 lbs boneless, cut into 1 in pieces" plus the spoken "chicken thighs" becomes "1.5 lbs boneless chicken thighs, cut into 1 inch pieces").
 - Steps: short imperative sentences in cooking order, include temperatures and times when stated.
+- Never write a step that only names a stage ("Cook the chicken:"). When the method has parts (chicken, sauce, rice), put a heading line before that part's steps, written as "## For the sauce". Use headings only when there are two or more parts; a single-part recipe has none.
 - Title: the dish name only.
 - The transcript is speech-to-text and can mishear cooking words ("cating" for "coating"); fix obvious mishearings using context.
 - Sources may disagree; prefer on-screen text for quantities, spoken transcript for method.
@@ -114,6 +141,50 @@ SPOKEN TRANSCRIPT:
 ON-SCREEN TEXT (deduplicated):
 {ocr}
 """
+
+from amounts import fill_caption_amounts
+
+QTY_START = re.compile(r"^(\d|[¼-¾⅐-⅞]|a pinch|a dash|a handful)", re.I)
+
+
+def caption_ingredients(caption):
+    """Ingredient lines written in a caption ("- 1 cup flour - 2 eggs" or one per line). [] if there is no list."""
+    parts = re.split(r"(?:^|\s)[-•▪*]\s+", caption or "")[1:]
+    items = [re.sub(r"\s+", " ", p).strip(" ,;") for p in parts]
+    items = [i for i in items if i and not i.startswith("#")]
+    good = [i for i in items if QTY_START.match(i)]
+    return good if len(good) >= 3 and len(good) >= len(items) * 0.7 else []
+
+
+def keep_caption_amounts(r, cap_items):
+    """If the model dropped the amounts the caption lists, use the caption's lines as they are."""
+    have = sum(1 for i in (r.get("ingredients") or []) if re.search(r"\d", i))
+    if cap_items and have < len(cap_items) * 0.7:
+        r["ingredients"] = list(cap_items)
+    return r
+
+
+HEAD_LIKE = re.compile(r"^[A-Z][^.!?]{0,60}:$")
+
+
+def norm_steps(steps):
+    """Section titles become "## Title" entries (a bare "Cook the chicken:" line is a title, not a step)."""
+    out = []
+    for s in steps or []:
+        s = str(s).strip()
+        m = re.match(r"^#{1,6}\s*(.+?)\s*:?$", s)
+        if m:
+            s = "## " + m.group(1)
+        elif HEAD_LIKE.match(s) and len(s.split()) <= 8:
+            s = "## " + s.rstrip(":").strip()
+        if s.startswith("## ") and out and out[-1].startswith("## "):
+            out.pop()  # a title with nothing under it
+        out.append(s)
+    while out and out[-1].startswith("## "):
+        out.pop()
+    if sum(1 for s in out if s.startswith("## ")) == 1:
+        out = [s for s in out if not s.startswith("## ")]  # one title alone splits nothing
+    return out
 
 
 def clean_list(x):
@@ -142,23 +213,28 @@ def _nums(text):
 
 def ground(ingredients, steps, corpus):
     """Strip any number that is not present in the sources. Returns (ing, steps, n_dropped)."""
-    have, dropped = _nums(corpus), 0
+    have, dropped, changes = _nums(corpus), 0, []
 
-    def fix(line):
+    def fix(line, kind, idx):
         nonlocal dropped
         bad = _nums(line) - have
         if not bad:
             return line
         dropped += 1
+        was = line
         for n in bad:
             line = re.sub(rf"(?<![\d./]){re.escape(n)}(?![\d./])\s*(cups?|tbsp|tsp|tablespoons?|teaspoons?|lbs?|pounds?|oz|ounces?|g|grams?|kg|ml|l|minutes?|mins?|hours?|degrees?|°[CF]?)?\b\.?\s*(of )?", "", line, flags=re.I)
-        return re.sub(r"\s+", " ", line).strip(" ,;")
+        line = re.sub(r"\s+", " ", line).strip(" ,;")
+        changes.append({"kind": kind, "index": idx, "was": was})  # remembered so the UI can point at the line to check
+        return line
 
-    return [fix(i) for i in ingredients], [fix(s) for s in steps], dropped
+    ing = [fix(x, "ingredient", i) for i, x in enumerate(ingredients)]
+    stp = [fix(x, "step", i) for i, x in enumerate(steps)]
+    return ing, stp, dropped, changes
 
 
 def from_jsonld(d: Path):
-    ld = json.loads((d / "jsonld.json").read_text())
+    ld = json.loads((d / "jsonld.json").read_text(encoding="utf-8"))
     steps = []
     for s in ld.get("recipeInstructions", []):
         if isinstance(s, str):
@@ -192,8 +268,9 @@ Rules:
 - Skip the author's story, introduction, tips, notes, nutrition facts, reviews, ads and links to other recipes. Just the recipe.
 - NEVER guess. Copy quantities, times and temperatures exactly as written. Do not add ingredients or steps.
 - If the page has no recipe, return empty "ingredients" and "steps" lists.
-- Ingredients: "quantity unit item", one per entry, in the order listed. Drop optional commentary in parentheses.
+- Ingredients: "quantity unit item, preparation", one per entry, in the order listed. Keep the preparation exactly as written ("diced", "cut into 1 inch pieces", "boneless skinless"). Drop other optional commentary in parentheses.
 - Steps: the method in order, one action per entry, short imperative sentences. Keep times and temperatures.
+- If the method is split into parts with their own titles ("For the sauce:"), keep each title as its own entry written "## For the sauce" before that part's steps. Never put a title in a step. No headings when the method is one part.
 - Title: the recipe's own name exactly as the page titles it (remove site names and the word 'recipe'). Never rename or reinterpret the dish.
 - Servings: only if the page states a serving count or yield, otherwise null.
 
@@ -229,16 +306,18 @@ def finish(r, corpus, title_fallback="", evidence_min=60):
     """Shared checks: no invented numbers, flag thin or amount-free recipes."""
     r["title"] = re.sub(r"\s+", " ", str(r.get("title") or "")).strip() or title_fallback or "Untitled"
     r["ingredients"] = clean_list(r.get("ingredients"))
-    r["steps"] = clean_list(r.get("steps"))
-    r["ingredients"], r["steps"], dropped = ground(r["ingredients"], r["steps"], corpus)
+    r["steps"] = norm_steps(clean_list(r.get("steps")))
+    r["ingredients"], r["steps"], dropped, changes = ground(r["ingredients"], r["steps"], corpus)
     if r.get("servings") and not (_nums(str(r["servings"])) & _nums(corpus)):
         r["servings"] = None
     r["needs_review"] = None
+    r["unverified"] = []
     if not r["ingredients"] or not r["steps"] or len(corpus.split()) < evidence_min:
         r["ingredients"], r["steps"] = [], []
         r["needs_review"] = "source has too little recipe detail"
     elif dropped:
         r["needs_review"] = f"removed {dropped} unverified quantities"
+        r["unverified"] = changes
     elif not any(re.search(r"\d", i) for i in r["ingredients"]):
         r["needs_review"] = "source gives no amounts"
     if r.get("meal") not in MEALS:
@@ -247,9 +326,9 @@ def finish(r, corpus, title_fallback="", evidence_min=60):
 
 
 def from_page_text(d: Path, fx: dict, log: dict):
-    html = (d / "page.html").read_text(errors="replace")
+    html = (d / "page.html").read_text(errors="replace", encoding="utf-8")
     text = page_text(html)
-    (d / "page.txt").write_text(text)
+    (d / "page.txt").write_text(text, encoding="utf-8")
     window = recipe_window(text)
     r = ollama(PAGE_PROMPT.format(meals=MEALS, title=fx.get("page_title") or "", text=window),
                num_ctx=8192, timeout=300)
@@ -432,32 +511,47 @@ def gen_tags(r):
     return clean_tags(j.get("tags"), r.get("meal"))
 
 
+def stage(d: Path, key: str):
+    """Tell the app which step we are on (shown live in the UI)."""
+    try:
+        (d / ".stage").write_text(key, encoding="utf-8")
+    except Exception:
+        pass
+
+
 def process(d: Path):
     t0 = time.time()
-    fx = json.loads((d / "fetch.json").read_text())
+    fx = json.loads((d / "fetch.json").read_text(encoding="utf-8"))
     log = {}
     nut_corpus = None  # text searched for nutrition facts when the structured data has none
     if fx["kind"] == "page":
         if fx.get("has_jsonld") and not os.environ.get("FORCE_TEXT"):
+            stage(d, "reading")
             r = from_jsonld(d)
             r["meal"] = guess_meal(r["title"], r["ingredients"], r.pop("category_hint"))
             r["needs_review"] = None
         else:
+            stage(d, "writing")
             r = from_page_text(d, fx, log)
-            nut_corpus = (d / "page.txt").read_text()
+            nut_corpus = (d / "page.txt").read_text(encoding="utf-8")
     else:
         video = d / "source.mp4"
+        stage(d, "transcribing")
         transcript = transcribe(video)
         log["transcribe_s"] = round(time.time() - t0, 1)
+        stage(d, "scanning")
         frames = extract_frames(video, d / "_frames")
         scan = scan_frames(frames)
         log["scan_s"] = round(time.time() - t0, 1)
-        (d / "ocr.json").write_text(json.dumps(scan, indent=1, ensure_ascii=False))
-        (d / "transcript.txt").write_text(transcript)
+        (d / "ocr.json").write_text(json.dumps(scan, indent=1, ensure_ascii=False), encoding="utf-8")
+        (d / "transcript.txt").write_text(transcript, encoding="utf-8")
         ocr = dedupe_text(s["text"] for s in scan)
+        stage(d, "writing")
         r = ollama(STRUCT_PROMPT.format(meals=MEALS, caption=fx.get("caption", "")[:3000],
                                         transcript=transcript[:4000], ocr=ocr[:4000]),
                    num_ctx=8192, timeout=300)
+        keep_caption_amounts(r, caption_ingredients(fx.get("caption", "")))
+        fill_caption_amounts(r, fx.get("caption", ""))
         corpus = " ".join([fx.get("caption", ""), transcript, ocr])
         r, dropped = finish(r, corpus, fx.get("yt_title") or fx["source_url"])
         nut_corpus = corpus
@@ -465,9 +559,10 @@ def process(d: Path):
         for f in (d / "_frames").glob("f_*.jpg"):
             f.unlink()
         (d / "_frames").rmdir()
+    stage(d, "finishing")
     no_times = not any(r.get(k) for k in TIME_KEYS)
     if (not r.get("nutrition") or no_times) and nut_corpus is None and (d / "page.html").exists():
-        nut_corpus = page_text((d / "page.html").read_text(errors="replace"))
+        nut_corpus = page_text((d / "page.html").read_text(errors="replace", encoding="utf-8"))
     if not r.get("nutrition"):
         r["nutrition"] = extract_nutrition(nut_corpus)
     if no_times:
@@ -481,7 +576,7 @@ def process(d: Path):
     cover = "thumbnail.jpg" if (d / "thumbnail.jpg").exists() else None
     r.update(source_url=fx["source_url"], kind=fx["kind"], cover=cover,
              has_video=(d / "source.mp4").exists(), processed_at=time.strftime("%Y-%m-%dT%H:%M:%S"))
-    (d / "recipe.json").write_text(json.dumps(r, indent=2, ensure_ascii=False))
+    (d / "recipe.json").write_text(json.dumps(r, indent=2, ensure_ascii=False), encoding="utf-8")
     log["total_s"] = round(time.time() - t0, 1)
     return r, log
 

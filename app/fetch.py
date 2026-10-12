@@ -2,7 +2,9 @@
 import hashlib
 import ipaddress
 import json
+import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -13,7 +15,10 @@ from pathlib import Path
 import urllib.error
 from urllib.parse import urljoin, urlparse
 
-DATA = Path("/srv/recipebox/recipes")
+# Data lives in $FOODBOX_DATA (default: ./data next to the repo)
+BASE = Path(os.environ.get("FOODBOX_DATA") or Path(__file__).resolve().parent.parent / "data")
+DATA = BASE / "recipes"
+YTDLP = [sys.executable, "-m", "yt_dlp"]
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
 VIDEO_HOSTS = ("tiktok.com", "youtube.com", "youtu.be", "vm.tiktok.com")
 
@@ -49,15 +54,15 @@ def make_dir(url: str, title: str) -> Path:
 
 def fetch_video(url: str) -> Path:
     info = json.loads(subprocess.run(
-        ["yt-dlp", "--no-warnings", "--skip-download", "--dump-single-json", url],
-        check=True, capture_output=True, text=True, timeout=120).stdout)
+        [*YTDLP, "--no-warnings", "--skip-download", "--dump-single-json", url],
+        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout)
     d = make_dir(url, info.get("title") or info.get("id"))
     subprocess.run(
-        ["yt-dlp", "--no-warnings", "-f", "bv*[height<=1080]+ba/b[height<=1080]/b",
+        [*YTDLP, "--no-warnings", "-f", "bv*[height<=1080]+ba/b[height<=1080]/b",
          "--merge-output-format", "mp4", "-o", str(d / "source.%(ext)s"),
          "--write-thumbnail", "--convert-thumbnails", "jpg",
          "--write-auto-subs", "--sub-langs", "en.*", "--sub-format", "vtt",
-         url], check=True, capture_output=True, text=True, timeout=600)
+         url], check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
     thumb = next(d.glob("source.jpg"), None)
     if thumb:
         thumb.rename(d / "thumbnail.jpg")
@@ -67,7 +72,7 @@ def fetch_video(url: str) -> Path:
         "caption": info.get("description") or "", "yt_title": info.get("title"),
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     }
-    (d / "fetch.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))
+    (d / "fetch.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
     return d
 
 
@@ -123,13 +128,14 @@ def _get(url: str, limit=MAX_BYTES) -> bytes:
 
 
 def _get_browser(url: str) -> bytes:
-    """Fallback for Cloudflare-style challenges: render in a stealth Chromium under Xvfb."""
+    """Fallback for Cloudflare-style challenges: render in a stealth Chromium (under Xvfb on Linux)."""
     import subprocess, tempfile
     here = Path(__file__).parent
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "page.html"
         try:
-            subprocess.run(["xvfb-run", "-a", sys.executable, str(here / "browser_fetch.py"), url, str(out)],
+            xvfb = ["xvfb-run", "-a"] if shutil.which("xvfb-run") else []
+            subprocess.run([*xvfb, sys.executable, str(here / "browser_fetch.py"), url, str(out)],
                            check=True, timeout=120, capture_output=True)
         except Exception:
             raise RuntimeError("site refused the download (HTTP 403, browser fallback also blocked)") from None
@@ -167,8 +173,8 @@ def fetch_page(url: str) -> Path:
             break
     title = (recipe or {}).get("name") or _meta(html, "og:title") or urlparse(url).path
     d = make_dir(url, title)
-    (d / "page.html").write_text(html)
-    (d / "jsonld.json").write_text(json.dumps(recipe, indent=2, ensure_ascii=False))
+    (d / "page.html").write_text(html, encoding="utf-8")
+    (d / "jsonld.json").write_text(json.dumps(recipe, indent=2, ensure_ascii=False), encoding="utf-8")
     img = (recipe or {}).get("image")
     if isinstance(img, list):
         img = img[0]
@@ -182,7 +188,7 @@ def fetch_page(url: str) -> Path:
             pass  # a missing cover is not fatal
     (d / "fetch.json").write_text(json.dumps({
         "kind": "page", "source_url": url, "has_jsonld": _usable(recipe), "page_title": title,
-        "fetched_at": datetime.now(timezone.utc).isoformat()}, indent=2))
+        "fetched_at": datetime.now(timezone.utc).isoformat()}, indent=2), encoding="utf-8")
     return d
 
 

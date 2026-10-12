@@ -18,13 +18,34 @@ from fastapi.responses import FileResponse, JSONResponse
 import fetch
 
 APP = Path(__file__).parent
-BASE = Path("/srv/recipebox")
+BASE = fetch.BASE
 RECIPES, TRASH = BASE / "recipes", BASE / "trash"
-KEY = os.environ["RECIPE_KEY"]
+
+
+def _load_key():
+    """RECIPE_KEY from the environment or ../.env; created on first run if missing."""
+    env = Path(os.environ.get("FOODBOX_ENV_FILE") or APP.parent / ".env")
+    if not os.environ.get("RECIPE_KEY") and env.exists():
+        for line in env.read_text(encoding="utf-8").splitlines():
+            k, _, v = line.partition("=")
+            if k.strip() == "RECIPE_KEY" and v.strip() and v.strip() != "change-me":
+                return v.strip()
+    if os.environ.get("RECIPE_KEY"):
+        return os.environ["RECIPE_KEY"]
+    key = secrets.token_urlsafe(32)
+    with open(env, "a", encoding="utf-8") as f:
+        f.write(f"RECIPE_KEY={key}\n")
+    print(f"Generated RECIPE_KEY and saved it to {env}")
+    return key
+
+
+KEY = _load_key()
 MEALS = ["Breakfast", "Lunch", "Dinner", "Snack", "Dessert", "Other"]
 IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
 SERVE_EXT = IMG_EXT | {".mp4", ".html", ".txt", ".vtt"}
 URL_RE = re.compile(r"https?://[^\s\"'<>]+")
+# a pasted link without the scheme ("www.tiktok.com/@a/video/1"): needs www. or a path so plain words with dots do not match
+BARE_RE = re.compile(r"(?<![\w@./-])(?:www\.[a-z0-9-]+(?:\.[a-z0-9-]+)*|(?:[a-z0-9-]+\.)+[a-z]{2,})(?:/[^\s\"'<>]*)?", re.I)
 
 for p in (RECIPES, TRASH):
     p.mkdir(parents=True, exist_ok=True)
@@ -37,6 +58,13 @@ db.execute("""CREATE TABLE IF NOT EXISTS jobs(
 db.execute("UPDATE jobs SET status='queued' WHERE status='running'")  # resume after restart
 db.commit()
 dblock = threading.Lock()
+LIVE: dict = {}  # job id -> {"stage": str, "dir": recipe folder name or None}
+STAGES = {  # key -> (percent, label shown in the UI)
+    "queued": (0, "Waiting in line"), "fetching": (12, "Fetching the link"),
+    "reading": (45, "Reading the page"), "transcribing": (35, "Listening to the video"),
+    "scanning": (60, "Reading the screen"), "writing": (80, "Writing the recipe"),
+    "finishing": (95, "Final touches"), "starting": (20, "Getting started"),
+}
 
 
 def q(sql, *a):
@@ -60,7 +88,7 @@ def rdir(rid: str) -> Path:
 
 
 def load(d: Path) -> dict:
-    r = json.loads((d / "recipe.json").read_text())
+    r = json.loads((d / "recipe.json").read_text(encoding="utf-8"))
     r["id"] = d.name
     r["photos"] = sorted(f.name for f in (d / "shots").glob("*") if f.suffix.lower() in IMG_EXT) \
         if (d / "shots").exists() else []
@@ -72,7 +100,7 @@ def load(d: Path) -> dict:
 def save(d: Path, r: dict):
     r = {k: v for k, v in r.items() if k not in ("id", "photos", "has_page", "has_thumb")}
     tmp = d / "recipe.json.tmp"
-    tmp.write_text(json.dumps(r, indent=2, ensure_ascii=False))
+    tmp.write_text(json.dumps(r, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp.replace(d / "recipe.json")
 
 
@@ -81,7 +109,12 @@ def all_recipes():
     for d in RECIPES.iterdir():
         if (d / "recipe.json").exists():
             try:
-                out.append(load(d))
+                r = load(d)
+                if r.get("draft"):  # unsaved "Write one" recipe: hidden, and cleaned up after a day
+                    if time.time() - (d / "recipe.json").stat().st_mtime > 86400:
+                        shutil.move(str(d), str(TRASH / f"{d.name}_{int(time.time())}"))
+                    continue
+                out.append(r)
             except Exception:
                 pass
     return out
@@ -94,7 +127,7 @@ def find_by_url(url):
 
 
 def write_stub(d: Path, url: str, err: str):
-    fx = json.loads((d / "fetch.json").read_text()) if (d / "fetch.json").exists() else {}
+    fx = json.loads((d / "fetch.json").read_text(encoding="utf-8")) if (d / "fetch.json").exists() else {}
     save(d, {"title": fx.get("yt_title") or url, "meal": "Other", "servings": None,
              "ingredients": [], "steps": [], "source_url": url, "kind": fx.get("kind", "video"),
              "cover": "thumbnail.jpg" if (d / "thumbnail.jpg").exists() else None,
@@ -105,31 +138,36 @@ def write_stub(d: Path, url: str, err: str):
 # ---------- worker ----------
 def unload_model():
     try:
-        requests.post("http://127.0.0.1:11434/api/generate",
-                      json={"model": "qwen2.5vl:7b", "keep_alive": 0}, timeout=20)
+        requests.post(os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/") + "/api/generate",
+                      json={"model": os.environ.get("FOODBOX_MODEL") or os.environ.get("RECIPE_VL") or "gemma4:e4b", "keep_alive": 0}, timeout=20)
     except Exception:
         pass
 
 
 def run_job(job):
     url, d = job["url"], None
+    live = LIVE[job["id"]] = {"stage": "fetching", "dir": job["recipe_id"]}
     try:
         if job["recipe_id"]:
             d = RECIPES / job["recipe_id"]
         else:
             unload_model()
             d = fetch.fetch(url)
+        live["dir"] = d.name
+        (d / ".stage").unlink(missing_ok=True)
+        live["stage"] = "starting"
         unload_model()
         keep_user = {}
         if job["recipe_id"]:
             try:
-                old = json.loads((d / "recipe.json").read_text())
+                old = json.loads((d / "recipe.json").read_text(encoding="utf-8"))
                 keep_user = {k: old[k] for k in ("favorite", "notes", "tags") if k in old}
             except Exception:
                 pass
             (d / "recipe.json").unlink(missing_ok=True)
         p = subprocess.run([sys.executable, "process.py", str(d)], cwd=APP,
-                           capture_output=True, text=True, timeout=1800)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800,
+                           env={**os.environ, "PYTHONUTF8": "1"})  # Windows default codec is cp1252
         if not (d / "recipe.json").exists():
             raise RuntimeError((p.stdout + p.stderr).strip().splitlines()[-1][:200] if (p.stdout + p.stderr).strip()
                                else "processing produced nothing")
@@ -159,6 +197,10 @@ def run_job(job):
         except Exception:
             pass
         q("UPDATE jobs SET status='failed', error=?, recipe_id=?, updated=? WHERE id=?", msg, rid, time.time(), job["id"])
+    finally:
+        LIVE.pop(job["id"], None)
+        if d is not None:
+            (d / ".stage").unlink(missing_ok=True)
 
 
 def worker():
@@ -183,8 +225,12 @@ hits: list = []
 def enqueue(raw: str, meal=None, recipe_id=None):
     m = URL_RE.search(raw or "")
     if not m:
-        raise HTTPException(400, "no link found")
-    url = m.group(0).rstrip(".,)")
+        b = next((x for x in BARE_RE.finditer(raw or "") if x.group(0).lower().startswith("www.") or "/" in x.group(0)), None)
+        if not b:
+            raise HTTPException(400, "no link found")
+        url = "https://" + b.group(0).rstrip(".,)")
+    else:
+        url = m.group(0).rstrip(".,)")
     try:
         fetch.check_url(url)
     except Exception as e:
@@ -223,11 +269,66 @@ def ui_add(body: dict = Body(...)):
     return enqueue(body.get("url", ""), body.get("meal"))
 
 
+def _preview(name):
+    """Title and cover of a recipe folder that is still being processed."""
+    d = RECIPES / name
+    out = {"title": None, "thumb": None, "site": None}
+    try:
+        fx = json.loads((d / "fetch.json").read_text(encoding="utf-8"))
+        out["title"] = fx.get("yt_title") or fx.get("page_title")
+        out["site"] = fx.get("uploader") or fx.get("site")
+    except Exception:
+        pass
+    if (d / "thumbnail.jpg").exists():
+        out["thumb"] = f"/files/{name}/thumbnail.jpg"
+    return out
+
+
+@app.post("/api/ui/manual")  # blank recipe typed in by hand (recipe book, family card, ...)
+def ui_manual(body: dict = Body(default={})):
+    throttle()
+    meal = body.get("meal") if body.get("meal") in MEALS else "Other"
+    rid = time.strftime("%Y-%m-%d") + "_manual_" + secrets.token_hex(3)
+    d = RECIPES / rid
+    d.mkdir(parents=True)
+    save(d, {"title": "", "meal": meal, "servings": None, "ingredients": [], "steps": [],
+             "source_url": "", "source_note": "", "kind": "manual", "cover": None, "has_video": False,
+             "needs_review": None, "tags": [], "favorite": False, "notes": "", "draft": True,
+             "processed_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
+    return {"id": rid}
+
+
 @app.get("/api/jobs")
 def jobs():
+    now = time.time()
     rows = q("SELECT id,url,status,error,recipe_id FROM jobs WHERE status IN ('queued','running') "
-             "OR (status='failed' AND updated > ?) ORDER BY id DESC LIMIT 30", time.time() - 86400).fetchall()
-    return [dict(r) for r in rows]
+             "OR (status='failed' AND updated > ?) OR (status='done' AND updated > ?) "
+             "ORDER BY id DESC LIMIT 30", now - 86400, now - 300).fetchall()
+    out = []
+    for r in rows:
+        j = dict(r)
+        live = LIVE.get(j["id"])
+        if j["status"] == "running" and live:
+            key = live["stage"]
+            if live["dir"]:
+                try:
+                    key = (RECIPES / live["dir"] / ".stage").read_text(encoding="utf-8").strip() or key
+                except Exception:
+                    pass
+            j["stage"] = key if key in STAGES else "starting"
+        else:
+            j["stage"] = "queued"
+        j["pct"], j["label"] = STAGES[j["stage"]]
+        name = (live or {}).get("dir") or j["recipe_id"]
+        if name and j["status"] != "failed":
+            j.update(_preview(name))
+            if j["status"] == "done":
+                try:
+                    j["title"] = load(RECIPES / name).get("title") or j["title"]
+                except Exception:
+                    pass
+        out.append(j)
+    return out
 
 
 # ---------- browse / edit ----------
@@ -247,12 +348,20 @@ def recipes(meal: str = "", q_: str = Query("", alias="q"), sort: str = "new", t
     want = [t.strip().lower() for t in tag.split(",") if t.strip()]
     if want:
         rs = [r for r in rs if all(t in (r.get("tags") or []) for t in want)]
-    needle = q_.lower().strip()
-    if needle:
-        rs = [r for r in rs if needle in json.dumps([r.get("title"), r.get("ingredients"), r.get("steps"),
-                                                     r.get("tags"), r.get("notes")]).lower()]
-    rs.sort(key=(lambda r: (r.get("title") or "").lower()) if sort == "az"
-            else (lambda r: r.get("processed_at") or ""), reverse=(sort != "az"))
+    words = re.findall(r"[\w']+", q_.lower())
+    if words:  # every typed word must start a word in the title or tags ("bean" finds "Bean Toast" and "beans")
+        def hit(r):
+            have = re.findall(r"[\w']+", " ".join([r.get("title") or "", *(r.get("tags") or [])]).lower())
+            return all(any(h.startswith(w) for h in have) for w in words)
+        rs = [r for r in rs if hit(r)]
+    def meal_key(r):  # Breakfast, Lunch, ... then A-Z inside each meal
+        mm = r.get("meal") if r.get("meal") in MEALS else "Other"
+        return (MEALS.index(mm), (r.get("title") or "").lower())
+    if sort == "meal":
+        rs.sort(key=meal_key)
+    else:
+        rs.sort(key=(lambda r: (r.get("title") or "").lower()) if sort == "az"
+                else (lambda r: r.get("processed_at") or ""), reverse=(sort != "az"))
     keep = ("id", "title", "meal", "cover", "needs_review", "kind", "has_video", "source_url", "tags", "favorite")
     counts = {m: 0 for m in MEALS}
     review = favs = 0
@@ -280,7 +389,7 @@ def patch(rid: str, body: dict = Body(...)):
         if body["meal"] not in MEALS:
             raise HTTPException(400, "bad meal")
         r["meal"] = body["meal"]
-    for k in ("title", "servings"):
+    for k in ("title", "servings", "source_note"):
         if k in body:
             r[k] = str(body[k]).strip()[:200] or None
     for k in ("ingredients", "steps"):
@@ -332,6 +441,9 @@ def patch(rid: str, body: dict = Body(...)):
         r["cover"] = c
     if body.get("reviewed"):
         r["needs_review"] = None
+        r.pop("unverified", None)
+    if body.get("draft") is False:
+        r.pop("draft", None)
     save(d, r)
     return load(d)
 
@@ -339,6 +451,9 @@ def patch(rid: str, body: dict = Body(...)):
 @app.delete("/api/recipes/{rid}")
 def delete(rid: str):
     d = rdir(rid)
+    if load(d).get("draft"):  # never-saved draft: just discard it
+        shutil.rmtree(d)
+        return {"ok": True}
     shutil.move(str(d), str(TRASH / f"{d.name}_{int(time.time())}"))
     return {"ok": True}
 
@@ -348,7 +463,14 @@ def reprocess(rid: str):
     d = rdir(rid)
     r = load(d)
     if not (d / "fetch.json").exists():
-        return enqueue(r["source_url"])
+        # failed link stub: nothing was downloaded, so move it aside and fetch the link again from scratch
+        dest = TRASH / f"{d.name}_{int(time.time())}"
+        shutil.move(str(d), str(dest))
+        try:
+            return enqueue(r["source_url"])
+        except Exception:
+            shutil.move(str(dest), str(d))
+            raise
     return enqueue(r["source_url"], recipe_id=d.name)
 
 
@@ -383,7 +505,10 @@ def del_shot(rid: str, name: str):
 
 @app.get("/files/{rid}/{path:path}")
 def files(rid: str, path: str):
-    d = rdir(rid)
+    # no recipe.json yet while a job runs, but the downloaded thumbnail must already be servable
+    if not re.fullmatch(r"[\w.\-]+", rid) or not (RECIPES / rid).is_dir():
+        raise HTTPException(404)
+    d = RECIPES / rid
     f = (d / path).resolve()
     if d.resolve() not in f.parents or not f.is_file() or f.suffix.lower() not in SERVE_EXT:
         raise HTTPException(404)

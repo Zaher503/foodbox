@@ -9,3 +9,13 @@ __pycache__/
 recipes/
 trash/
 jobs.sqlite*
+
+# default recipe data folder
+data/
+.venv/
+
+bench/
+
+# personal benchmark inputs and output
+links.txt
+scripts/bench_report.html
