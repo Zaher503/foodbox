@@ -1,0 +1,62 @@
+name: CD
+
+# Runs after CI passes on main: publish the image, then deploy to the Zephyrus
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/zaher503/foodbox:latest
+            ghcr.io/zaher503/foodbox:${{ github.event.workflow_run.head_sha || github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: publish
+    # self-hosted runner on the Zephyrus; only ever triggered from main, never from pull requests
+    runs-on: [self-hosted, zephyrus]
+    steps:
+      - name: Update the stack
+        run: |
+          cd /opt/foodbox
+          git fetch origin main
+          git reset --hard origin/main
+          docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
+          docker compose -f compose.yaml -f compose.gpu.yaml pull app
+          docker compose -f compose.yaml -f compose.gpu.yaml up -d
+          docker image prune -f
+      - name: Health check
+        run: |
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8800/healthz && exit 0
+            sleep 2
+          done
+          docker compose -f /opt/foodbox/compose.yaml logs --tail 50 app
+          exit 1

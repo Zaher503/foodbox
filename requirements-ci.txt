@@ -1,0 +1,10 @@
+# Light dependencies for CI tests and lint (no Whisper/CUDA/Chromium)
+fastapi==0.142.2
+uvicorn==0.54.0
+python-multipart==0.0.32
+requests==2.34.2
+trafilatura==2.3.1
+numpy==2.5.3
+httpx
+pytest
+ruff
