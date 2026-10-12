@@ -7,7 +7,10 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
+import uuid
+from contextvars import ContextVar
 from pathlib import Path
 
 import requests
@@ -15,6 +18,40 @@ import requests
 OLLAMA = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/") + "/api/generate"
 VL = os.environ.get("FOODBOX_MODEL") or os.environ.get("RECIPE_VL") or "gemma4:e4b"  # main model; env overrides for A/B tests
 MEALS = ["Breakfast", "Lunch", "Dinner", "Snack", "Dessert", "Other"]
+# Shared AI hub (queue + Whisper). Unset means this app runs its own Whisper and talks to a plain Ollama.
+WHISPER_URL = os.environ.get("WHISPER_URL", "").rstrip("/")
+WHISPER_MODEL = os.environ.get("FOODBOX_WHISPER_MODEL", "large-v3")
+QUEUE_PATIENCE = float(os.environ.get("FOODBOX_QUEUE_PATIENCE", "1800"))  # extra seconds a call may wait in the hub's line
+_job: ContextVar = ContextVar("foodbox_job", default=None)  # [recipe folder, current stage key] of the job being processed
+
+
+def _hub_headers(audio_seconds=None) -> dict:
+    h = {"X-Client": "foodbox", "X-Priority": "normal", "X-Queue-Ticket": uuid.uuid4().hex} if WHISPER_URL else {}
+    if audio_seconds:
+        h["X-Audio-Seconds"] = str(round(audio_seconds, 1))
+    return h
+
+
+def _announce_wait(kind, model, audio_seconds=None):
+    """Ask the hub how long the line is; when it is long, show "Waiting for the AI queue" instead of looking stuck."""
+    cur = _job.get()
+    if not WHISPER_URL or cur is None:
+        return
+    try:
+        params = {"kind": kind, "model": model, "priority": "normal"}
+        if audio_seconds:
+            params["audio_seconds"] = round(audio_seconds, 1)
+        est = requests.get(f"{WHISPER_URL}/queue/estimate", params=params, timeout=3).json()
+    except Exception:
+        return
+    if est.get("wait_seconds", 0) >= 5:
+        stage(cur[0], "waiting", note=f"{est.get('position', 0)} ahead, about {round(est['wait_seconds'])} s")
+
+
+def _after_wait():
+    cur = _job.get()
+    if cur is not None and WHISPER_URL:
+        stage(cur[0], cur[1])
 
 
 def _preload_cuda():
@@ -50,7 +87,34 @@ def _whisper():
     return WhisperModel(os.environ.get("FOODBOX_WHISPER_MODEL", "small"), device="cpu", compute_type="int8")
 
 
+JUNK = re.compile(r"thank(s| you) (so much )?for (watching|listening)|subscribe|^\W*$", re.I)
+
+
+def transcribe_hub(video: Path) -> str:
+    """Whisper in the shared AI hub: send the audio, get the segments back."""
+    with tempfile.TemporaryDirectory() as tmp:
+        wav = Path(tmp) / "audio.wav"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000", str(wav)], check=True)
+        seconds = max((wav.stat().st_size - 44) / 32000, 0.0)
+        if seconds < 1:
+            return ""
+        _announce_wait("transcribe", WHISPER_MODEL, seconds)
+        try:
+            with open(wav, "rb") as f:
+                r = requests.post(f"{WHISPER_URL}/v1/audio/transcriptions", files={"file": ("audio.wav", f, "audio/wav")},
+                                  data={"model": WHISPER_MODEL, "vad_filter": "true", "beam_size": "5"},
+                                  headers={**_hub_headers(seconds), "X-Model": WHISPER_MODEL}, timeout=3600 + QUEUE_PATIENCE)
+            r.raise_for_status()
+        finally:
+            _after_wait()
+    segs = r.json().get("segments", [])
+    return " ".join(g["text"].strip() for g in segs
+                    if g.get("no_speech_prob", 0) < 0.5 and g.get("avg_logprob", 0) > -1.0 and not JUNK.search(g.get("text", "")))
+
+
 def transcribe(video: Path) -> str:
+    if WHISPER_URL:
+        return transcribe_hub(video)
     m = _whisper()
     import numpy as np
     raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000",
@@ -75,14 +139,24 @@ def extract_frames(video: Path, out: Path, every=2.0, width=768):
 
 
 def ollama(prompt, images=None, num_ctx=8192, fmt="json", timeout=300):
+    if WHISPER_URL:
+        timeout += QUEUE_PATIENCE  # the call may first wait its turn in the hub
+        _announce_wait("generate", VL)
+    try:
+        return _ollama(prompt, images, num_ctx, fmt, timeout)
+    finally:
+        _after_wait()
+
+
+def _ollama(prompt, images, num_ctx, fmt, timeout):
     body = {"model": VL, "prompt": prompt, "stream": False, "format": fmt,
             "options": {"num_ctx": num_ctx, "temperature": 0.1}, "think": False}  # no reasoning tokens: faster, JSON stays clean
     if images:
         body["images"] = [base64.b64encode(Path(i).read_bytes()).decode() for i in images]
-    r = requests.post(OLLAMA, json=body, timeout=timeout)
+    r = requests.post(OLLAMA, json=body, headers=_hub_headers(), timeout=timeout)
     if r.status_code == 400 and "think" in r.text:  # model has no thinking switch
         body.pop("think")
-        r = requests.post(OLLAMA, json=body, timeout=timeout)
+        r = requests.post(OLLAMA, json=body, headers=_hub_headers(), timeout=timeout)
     r.raise_for_status()
     return json.loads(r.json()["response"])
 
@@ -511,15 +585,24 @@ def gen_tags(r):
     return clean_tags(j.get("tags"), r.get("meal"))
 
 
-def stage(d: Path, key: str):
+def stage(d: Path, key: str, note: str = ""):
     """Tell the app which step we are on (shown live in the UI)."""
+    cur = _job.get()
+    if cur is not None and key != "waiting":
+        cur[1] = key  # remembered so the step comes back after a wait in the AI queue
     try:
         (d / ".stage").write_text(key, encoding="utf-8")
+        note_file = d / ".stage_note"
+        if note:
+            note_file.write_text(note, encoding="utf-8")
+        else:
+            note_file.unlink(missing_ok=True)
     except Exception:
         pass
 
 
 def process(d: Path):
+    _job.set([d, "starting"])
     t0 = time.time()
     fx = json.loads((d / "fetch.json").read_text(encoding="utf-8"))
     log = {}

@@ -49,8 +49,10 @@ jobs:
           git fetch origin main
           git reset --hard origin/main
           docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
-          docker compose -f compose.yaml -f compose.gpu.yaml pull app
-          docker compose -f compose.yaml -f compose.gpu.yaml up -d
+          docker compose -f compose.yaml -f compose.hub.yaml pull app
+          docker compose -f compose.yaml -f compose.hub.yaml up -d
+          # The bundled Ollama is gone: the shared AI hub serves every model
+          docker rm -f foodbox-ollama-1 foodbox-model-pull-1 2>/dev/null || true
           docker image prune -f
       - name: Health check
         run: |
@@ -58,5 +60,5 @@ jobs:
             curl -fsS http://127.0.0.1:8800/healthz && exit 0
             sleep 2
           done
-          docker compose -f /opt/foodbox/compose.yaml logs --tail 50 app
+          docker compose -f /opt/foodbox/compose.yaml -f /opt/foodbox/compose.hub.yaml logs --tail 50 app
           exit 1

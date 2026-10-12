@@ -1,0 +1,23 @@
+# For a machine that runs the shared AI hub (https://github.com/Zaher503/ai-hub), like the Zephyrus.
+# The hub holds the one Ollama and the one Whisper, queues GPU work for every app and reports the wait,
+# so this stack drops its own Ollama and does not need the GPU itself.
+#   docker compose -f compose.yaml -f compose.hub.yaml up -d
+services:
+  ollama:
+    profiles: [standalone]
+  model-pull:
+    profiles: [standalone]
+  app:
+    depends_on: !reset {}
+    environment:
+      - OLLAMA_URL=http://ai-hub:11434
+      - WHISPER_URL=http://ai-hub:11434
+    networks:
+      - default
+      - ai
+
+# Created by the ai-hub stack
+networks:
+  ai:
+    external: true
+    name: ai

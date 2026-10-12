@@ -54,6 +54,18 @@ No `git clone` needed once the image is published: download only `compose.yaml` 
 
 Update: `docker compose pull && docker compose up -d`. Back up: copy the recipes folder (or `docker run --rm -v foodbox_foodbox-data:/d -v "$PWD":/b alpine tar czf /b/foodbox-data.tgz -C /d .`).
 
+### Shared AI hub (the Zephyrus)
+
+On the home server Foodbox does not run its own Ollama or Whisper. The apps there (Foodbox, [date-planner](https://github.com/Zaher503/date-planner), [transcriber](https://github.com/Zaher503/transcriber)) share one stack, [ai-hub](https://github.com/Zaher503/ai-hub): one Ollama with all the models, one Whisper, and a gateway that puts every GPU job in a single line, swaps the models on the 8 GB card and reports how long the wait is. While a recipe waits its turn the UI says "Waiting for the AI queue (2 ahead, about 40 s)".
+
+```bash
+docker compose -f compose.yaml -f compose.hub.yaml up -d
+```
+
+`compose.hub.yaml` drops the bundled Ollama, points `OLLAMA_URL` and `WHISPER_URL` at `http://ai-hub:11434` and joins the Docker network `ai` that the hub creates. Foodbox then needs no GPU of its own. Without `WHISPER_URL` the app behaves as before (own Whisper, plain Ollama).
+
+**Deploys:** every push to `main` runs CI (lint, tests, compose check, image build); when it passes, CD publishes `ghcr.io/zaher503/foodbox` and the self-hosted runner on the Zephyrus (`/opt/actions-runner`, installed in `/opt/foodbox`) pulls it and restarts the stack. The ai-hub stack must be running first.
+
 ### Windows (without Docker)
 
 ```powershell

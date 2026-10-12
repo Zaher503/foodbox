@@ -64,6 +64,7 @@ STAGES = {  # key -> (percent, label shown in the UI)
     "reading": (45, "Reading the page"), "transcribing": (35, "Listening to the video"),
     "scanning": (60, "Reading the screen"), "writing": (80, "Writing the recipe"),
     "finishing": (95, "Final touches"), "starting": (20, "Getting started"),
+    "waiting": (30, "Waiting for the AI queue"),
 }
 
 
@@ -137,6 +138,8 @@ def write_stub(d: Path, url: str, err: str):
 
 # ---------- worker ----------
 def unload_model():
+    if os.environ.get("WHISPER_URL"):
+        return  # the shared AI hub swaps models itself, and another app may be using this one
     try:
         requests.post(os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/") + "/api/generate",
                       json={"model": os.environ.get("FOODBOX_MODEL") or os.environ.get("RECIPE_VL") or "gemma4:e4b", "keep_alive": 0}, timeout=20)
@@ -319,6 +322,11 @@ def jobs():
         else:
             j["stage"] = "queued"
         j["pct"], j["label"] = STAGES[j["stage"]]
+        if j["stage"] == "waiting" and live and live.get("dir"):
+            try:
+                j["label"] += " (" + (RECIPES / live["dir"] / ".stage_note").read_text(encoding="utf-8").strip() + ")"
+            except Exception:
+                pass
         name = (live or {}).get("dir") or j["recipe_id"]
         if name and j["status"] != "failed":
             j.update(_preview(name))
