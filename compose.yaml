@@ -1,15 +1,55 @@
+# Foodbox in one command:  docker compose up -d      (CPU)
+# With an NVIDIA GPU:      docker compose -f compose.yaml -f compose.gpu.yaml up -d      (or ./start.sh, .\start.ps1)
+# Open http://localhost:8800. The first start downloads the LLM (~10 GB) and Whisper on first use.
+name: foodbox
+
 services:
   ollama:
     image: ollama/ollama:latest
-    container_name: recipebox-ollama
     restart: unless-stopped
-    runtime: nvidia
     environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - OLLAMA_KEEP_ALIVE=30s
       - OLLAMA_MAX_LOADED_MODELS=1
     volumes:
-      - ./ollama:/root/.ollama
+      - ${OLLAMA_DIR:-ollama}:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Pulls the model once, then exits
+  model-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    entrypoint: ["ollama", "pull", "${FOODBOX_MODEL:-gemma4:e4b}"]
+    restart: "no"
+
+  app:
+    image: ghcr.io/zaher503/foodbox:${FOODBOX_TAG:-latest}
+    build: .
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+      model-pull:
+        condition: service_completed_successfully
+    user: "${PUID:-0}:${PGID:-0}"
     ports:
-      - "127.0.0.1:11434:11434"
+      - "${FOODBOX_PORT:-8800}:8800"
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - FOODBOX_MODEL=${FOODBOX_MODEL:-gemma4:e4b}
+      - RECIPE_KEY=${RECIPE_KEY:-}
+    volumes:
+      - ${FOODBOX_DATA_DIR:-foodbox-data}:/data
+      - ${HF_DIR:-hf-cache}:/cache
+
+volumes:
+  ollama:
+  foodbox-data:
+  hf-cache:

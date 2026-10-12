@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+venv
+data
+ollama
+backups
+__pycache__
+*.pyc
+*.bak*
+.env
+.secret
+links.txt
+scripts
+tests
+bench
