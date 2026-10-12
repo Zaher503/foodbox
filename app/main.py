@@ -272,6 +272,31 @@ def ui_add(body: dict = Body(...)):
     return enqueue(body.get("url", ""), body.get("meal"))
 
 
+@app.post("/api/ui/add-many")  # bulk: one link per line, one throttle hit for the whole paste
+def ui_add_many(body: dict = Body(...)):
+    throttle()
+    lines = [x.strip() for x in (body.get("text") or "").splitlines() if x.strip()]
+    if len(lines) > 100:
+        raise HTTPException(400, "at most 100 links at a time")
+    out = {"queued": 0, "exists": 0, "failed": [], "jobs": []}
+    seen = set()
+    for line in lines:
+        if line in seen:
+            continue
+        seen.add(line)
+        try:
+            r = enqueue(line, body.get("meal"))
+        except HTTPException as e:
+            out["failed"].append({"line": line[:200], "error": e.detail})
+            continue
+        if r["status"] == "exists":
+            out["exists"] += 1
+        else:
+            out["queued"] += 1
+            out["jobs"].append(r["job"])
+    return out
+
+
 def _preview(name):
     """Title and cover of a recipe folder that is still being processed."""
     d = RECIPES / name
