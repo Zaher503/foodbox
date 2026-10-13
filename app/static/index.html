@@ -192,6 +192,7 @@ ol.st.edit li{padding-right:34px}
 ol.st .srm{position:absolute;right:8px;top:10px}
 .addrow{margin-top:8px;color:var(--mute)}
 textarea.notes{min-height:90px}
+.rnotes p{margin:0 0 10px;line-height:1.5}
 a{color:var(--acc)}
 
 #left{display:block}
@@ -504,8 +505,21 @@ function parenMetric(s){
   return s.replace(/\((\d+(?:\.\d+)?)\s*(fl\.?\s*oz|ounces?|oz|pounds?|lbs?|cups?|pints?)\)/gi,(m,n,u)=>{const x=unitAt(u);return x?"("+metricText([n*x.f],x.u,"-")+")":m});
 }
 const tempText=(s,metric)=>metric?s.replace(/(\d{3})\s*°\s*F\b/g,(m,f)=>Math.round((f-32)*5/9/5)*5+"°C"):s;
+// "240ml / 1 cup Chicken Stock", "4 x 120g / 4oz Salmon": two measures for one amount. Show one, never both.
+const MET_U="kg|kilograms?|grams?|g|ml|millilit(?:er|re)s?|lit(?:er|re)s?|l",US_U="fl\\.?\\s*oz|cups?|tablespoons?|tbsps?|tbs|teaspoons?|tsps?|ounces?|oz|pounds?|lbs?|pints?|quarts?|qt";
+const MEAS=`(${NUM}(?:\\s*(?:-|–|to)\\s*${NUM})?)\\s*(${MET_U}|${US_U})\\b\\.?`;
+const DUAL=new RegExp(`^(\\s*(?:${NUM}\\s*[x×]\\s*)?)${MEAS}\\s*(?:/|⁄|\\bor\\b)\\s*${MEAS}(?=[\\s,;(]|$)`,"i");
+const isMet=u=>new RegExp(`^(?:${MET_U})$`,"i").test(u);
+function oneMeasure(s,metric){
+  const x=DUAL.exec(s);if(!x)return s;
+  const a={q:x[2],u:x[3]},b={q:x[4],u:x[5]};
+  let pick=a;
+  if(isMet(a.u)!==isMet(b.u))pick=(isMet(a.u)===!!metric)?a:b;
+  return x[1]+pick.q+" "+pick.u+s.slice(x[0].length);
+}
 // one ingredient line: scale the leading quantity, optionally convert US units to metric
 function lineNodes(s,m,metric){
+  s=oneMeasure(s,metric);
   const x=QTY.exec(s),plain=()=>[metric?parenMetric(s):s];
   if(!x)return plain();
   const a=toNum(x[2]),b=x[4]?toNum(x[4]):null;
@@ -517,7 +531,7 @@ function lineNodes(s,m,metric){
   else txt=fmt(a*m)+(b!==null?x[3]+fmt(b*m):"");
   return[x[1],el("b",{class:"q"},txt),metric?parenMetric(after):after];
 }
-const AMT=/^[\d¼-¾⅐-⅞][\d¼-¾⅐-⅞\s.\/⁄–-]*(?:\([^)]*\)\s*)?(?:(?:fl\.?\s*oz|cups?|tablespoons?|tbsps?|tbs|teaspoons?|tsps?|ounces?|oz|pounds?|lbs?|grams?|g|kilograms?|kg|milliliters?|ml|liters?|l|cloves?|cans?|pinch(?:es)?|dash(?:es)?|slices?|pieces?|packages?|pkgs?|sticks?|bunch(?:es)?|sprigs?|heads?|stalks?|quarts?|qt|pints?|pt|gallons?|jars?|bags?|handfuls?|cubes?)\b\.?)?/i;
+const AMT=/^[\d¼-¾⅐-⅞][\d¼-¾⅐-⅞\s.\/⁄–-]*(?:\s*[x×]\s*[\d¼-¾⅐-⅞][\d¼-¾⅐-⅞\s.\/⁄–-]*)?(?:\([^)]*\)\s*)?(?:(?:fl\.?\s*oz|cups?|tablespoons?|tbsps?|tbs|teaspoons?|tsps?|ounces?|oz|pounds?|lbs?|grams?|g|kilograms?|kg|milliliters?|ml|liters?|l|cloves?|cans?|pinch(?:es)?|dash(?:es)?|slices?|pieces?|packages?|pkgs?|sticks?|bunch(?:es)?|sprigs?|heads?|stalks?|quarts?|qt|pints?|pt|gallons?|jars?|bags?|handfuls?|cubes?)\b\.?)?/i;
 // split an ingredient line into [amount nodes, name nodes]
 function ingSplit(s,m,metric){
   const nodes=lineNodes(s,m,metric),full=nodes.map(n=>typeof n==="string"?n:n.textContent).join("");
@@ -550,6 +564,9 @@ function tagEditor(r){
   inp.onkeydown=async e=>{if(e.key==="Enter"||e.key===","){e.preventDefault();if(await add())inp.focus()}};
   inp.onblur=add;
   paint();return row;
+}
+function recipeNotes(r){
+  return el("section",{class:"rnotes"},el("h2",{},"Recipe notes"),...r.recipe_notes.map(t=>el("p",{},t)));
 }
 function notesBox(r){
   const ta=el("textarea",{class:"notes",placeholder:"Your notes: substitutions, tweaks, what everyone thought…"},r.notes||""),st=el("div",{class:"mute small"});
@@ -897,6 +914,7 @@ function draw(editing){
     const y=sheet.scrollTop;draw(false);sheet.scrollTop=y;
     load();
   };
+  if(r.recipe_notes&&r.recipe_notes.length)kids.push(recipeNotes(r));
   kids.push(el("h2",{},"Personal notes"),notesBox(r));
   if(r.nutrition&&Object.keys(r.nutrition).length)kids.push(nutBox(r));
   const links=[];

@@ -2,6 +2,7 @@
 import base64
 import ctypes
 import glob
+import html as htmllib
 import json
 import os
 import re
@@ -263,11 +264,30 @@ def norm_steps(steps):
     return out
 
 
+def unescape(text):
+    """&#39; -> ' (twice, for pages that escape the markup they already escaped)."""
+    text = str(text)
+    for _ in range(2):
+        if "&" not in text:
+            break
+        text = htmllib.unescape(text)
+    return text.replace("\xa0", " ")
+
+
+def tidy_parens(s):
+    """Recipe plugins leave "(, minced)" and "((see notes))" behind when a note or comma is empty."""
+    s = re.sub(r"\(\s*[,;]\s*", "(", s)
+    s = re.sub(r"\(\s*\(([^()]*)\)\s*\)", r"(\1)", s)
+    s = re.sub(r"\s+([,;])", r"\1", s)
+    s = re.sub(r"\(\s+", "(", s)
+    return re.sub(r"\s+\)", ")", s)
+
+
 def clean_list(x):
     out = []
     for i in (x or []):
-        s = re.sub(r"\(\s*\(?\s*(I|we|my|our)\b[^()]*\)?\s*\)", "", str(i), flags=re.I)  # "(I like to use ...)"
-        s = re.sub(r"\s+", " ", s).strip()
+        s = re.sub(r"\(\s*\(?\s*(I|we|my|our)\b[^()]*\)?\s*\)", "", unescape(i), flags=re.I)  # "(I like to use ...)"
+        s = tidy_parens(re.sub(r"\s+", " ", s).strip())
         if s:
             out.append(s)
     return out
@@ -321,7 +341,7 @@ def from_jsonld(d: Path):
             steps.append(s.get("text", ""))
     y = ld.get("recipeYield")
     y = y[0] if isinstance(y, list) and y else y
-    return {"title": ld.get("name"), "servings": str(y) if y else None,
+    return {"title": unescape(ld.get("name") or ""), "servings": str(y) if y else None,
             "ingredients": clean_list(ld.get("recipeIngredient")),
             "steps": clean_list(re.sub(r"<[^>]+>", "", s) for s in steps),
             "nutrition": nutrition_from_ld(ld),
@@ -378,9 +398,46 @@ def recipe_window(text: str, limit=7000) -> str:
     return text[:limit]
 
 
+NOTE_BOXES = ("wprm-recipe-notes", "tasty-recipes-notes", "mv-create-notes", "recipe-notes", "recipe__notes")
+
+
+def extract_notes(html: str):
+    """The recipe's own notes section ("(see notes)" points here), as a list of paragraphs. Not in schema.org data."""
+    try:
+        import lxml.html
+        doc = lxml.html.fromstring(html)
+    except Exception:
+        return []
+    box = None
+    for name in NOTE_BOXES:
+        found = doc.xpath(f"//*[contains(concat(' ', normalize-space(@class), ' '), ' {name} ') or "
+                          f"contains(concat(' ', normalize-space(@class), ' '), ' {name}-body ')]")
+        found = [f for f in found if "private" not in (f.get("class") or "")]
+        if found:
+            box = found[-1] if name == "wprm-recipe-notes" else found[0]
+            break
+    if box is None:
+        return []
+    for bad in box.xpath(".//script|.//style|.//button|.//form|.//*[contains(@class,'private-notes')]"):
+        bad.getparent().remove(bad)
+    for el in box.iter():
+        if not isinstance(el.tag, str):
+            continue
+        if el.tag in ("p", "li", "br", "h2", "h3", "h4") or "spacer" in (el.get("class") or "") \
+                or "display: block" in (el.get("style") or ""):
+            el.text = "\n" + (el.text or "")
+            el.tail = "\n" + (el.tail or "")
+    out = []
+    for line in box.text_content().split("\n"):
+        line = re.sub(r"\s+", " ", unescape(line)).strip()
+        if line and line.lower().rstrip(":") != "notes":
+            out.append(line[:2000])
+    return out[:30]
+
+
 def finish(r, corpus, title_fallback="", evidence_min=60):
     """Shared checks: no invented numbers, flag thin or amount-free recipes."""
-    r["title"] = re.sub(r"\s+", " ", str(r.get("title") or "")).strip() or title_fallback or "Untitled"
+    r["title"] = re.sub(r"\s+", " ", unescape(r.get("title") or "")).strip() or title_fallback or "Untitled"
     r["ingredients"] = clean_list(r.get("ingredients"))
     r["steps"] = norm_steps(clean_list(r.get("steps")))
     r["ingredients"], r["steps"], dropped, changes = ground(r["ingredients"], r["steps"], corpus)
@@ -626,6 +683,8 @@ def process(d: Path):
     r["tags"] = gen_tags(r)
     r.setdefault("favorite", False)
     r.setdefault("notes", "")
+    if (d / "page.html").exists():
+        r["recipe_notes"] = extract_notes((d / "page.html").read_text(errors="replace", encoding="utf-8"))
     cover = "thumbnail.jpg" if (d / "thumbnail.jpg").exists() else None
     r.update(source_url=fx["source_url"], kind=fx["kind"], cover=cover,
              has_video=(d / "source.mp4").exists(), processed_at=time.strftime("%Y-%m-%dT%H:%M:%S"))
