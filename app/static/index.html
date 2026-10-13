@@ -446,8 +446,8 @@ function paintPics(){
 function heroBox(r,editing){
   heroEditing=editing;picIdx=0;
   const menu=el("div",{class:"hmenu",hidden:true},
-    el("button",{onclick:()=>$("#coverFile").click()},"Set cover from device"),
-    el("button",{onclick:()=>$("#coverCam").click()},"Take a cover photo"),
+    editing?el("button",{onclick:()=>$("#coverFile").click()},"Set cover from device"):null,
+    editing?el("button",{onclick:()=>$("#coverCam").click()},"Take a cover photo"):null,
     editing?null:el("button",{onclick:()=>$("#file").click()},"Add photo to gallery"),
     r.has_thumb&&r.cover!=="thumbnail.jpg"?el("button",{onclick:async()=>{
       current=await api("/api/recipes/"+r.id,{method:"PATCH",body:JSON.stringify({cover:"thumbnail.jpg"})});if(editing)swapHero();else draw(false)}},"Use the original picture"):null);
@@ -816,7 +816,7 @@ function draw(editing){
     !editing&&r.steps?.length?el("button",{class:"btn",onclick:()=>cook(r,mult,metric)},"Cook mode"):null,
     editing?el("button",{class:"btn pri",onclick:()=>save()},"Save"):el("button",{class:"btn",onclick:toggle},"Edit"))];
   kids.push(heroBox(r,editing));
-  let mult=1,metric=store.get("metric")==="1",numbered=store.get("numbered")!=="0",flagsOn=false;
+  let mult=1,metric=store.get("metric")==="1",numbered=true,flagsOn=false;
   const FL=computeFlags(r);
   const E=editing?{h1:ce(r.title||"","Title","h1"),sv:ce(r.servings||"","as stated"),sn:nstep(r.servings_num,"#",1,100),
     sn2:ce(r.source_note||"","Source (book, page…)"),pi:nstep(r.prep_min,"–",5,2880),ci:nstep(r.cook_min,"–",5,2880),ti:nstep(r.total_min,"–",5,2880)}:null;
@@ -894,12 +894,7 @@ function draw(editing){
   if(editing||r.ingredients?.length)colA.append(el("h2",{},"Ingredients"),scaler,tbl);
   if(editing)colA.append(el("button",{type:"button",class:"btn addrow",onclick:()=>{const n=ingRow("");ul.append(n);n.querySelector(".am .ce").focus()}},"+ Ingredient"));
   if(editing||r.steps?.length){
-    const seg=el("div",{class:"seg"});
-    const segPaint=()=>seg.replaceChildren(
-      el("button",{class:numbered?"on":"",onclick:()=>{numbered=true;store.set("numbered","1");segPaint();paint()}},"Numbered"),
-      el("button",{class:numbered?"":"on",onclick:()=>{numbered=false;store.set("numbered","0");segPaint();paint()}},"Plain"));
-    segPaint();
-    colB.append(el("div",{class:"dirhead"},el("h2",{},"Directions"),seg),ol);
+    colB.append(el("h2",{},"Directions"),ol);
     if(editing)colB.append(el("div",{class:"addbar"},el("button",{type:"button",class:"btn addrow",onclick:()=>{const n=stepRow("");ol.append(n);n.querySelector(".ce").focus()}},"+ Step"),el("button",{type:"button",class:"btn addrow",onclick:()=>{const n=stepRow("## ");ol.append(n);n.querySelector(".ce").focus()}},"+ Heading")));
   }
   kids.push(el("div",{class:"cols"},colA,colB));
