@@ -55,6 +55,10 @@ db.row_factory = sqlite3.Row
 db.execute("""CREATE TABLE IF NOT EXISTS jobs(
   id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT, meal TEXT, recipe_id TEXT,
   status TEXT, error TEXT, created REAL, updated REAL)""")
+try:
+    db.execute("ALTER TABLE jobs ADD COLUMN user TEXT")  # who sent the link (older databases lack it)
+except sqlite3.OperationalError:
+    pass
 db.execute("UPDATE jobs SET status='queued' WHERE status='running'")  # resume after restart
 db.commit()
 dblock = threading.Lock()
@@ -164,7 +168,7 @@ def run_job(job):
         if job["recipe_id"]:
             try:
                 old = json.loads((d / "recipe.json").read_text(encoding="utf-8"))
-                keep_user = {k: old[k] for k in ("favorite", "notes", "tags") if k in old}
+                keep_user = {k: old[k] for k in ("favorite", "notes", "tags", "added_by") if k in old}
             except Exception:
                 pass
             (d / "recipe.json").unlink(missing_ok=True)
@@ -178,9 +182,12 @@ def run_job(job):
             r = load(d)
             r.update(keep_user)
             save(d, r)
-        if job["meal"] in MEALS:
+        if job["meal"] in MEALS or job["user"]:
             r = load(d)
-            r["meal"] = job["meal"]
+            if job["meal"] in MEALS:
+                r["meal"] = job["meal"]
+            if job["user"]:
+                r["added_by"] = job["user"]
             save(d, r)
         q("UPDATE jobs SET status='done', recipe_id=?, updated=? WHERE id=?", d.name, time.time(), job["id"])
     except Exception as e:
@@ -225,7 +232,10 @@ threading.Thread(target=worker, daemon=True).start()
 hits: list = []
 
 
-def enqueue(raw: str, meal=None, recipe_id=None):
+def enqueue(raw: str, meal=None, recipe_id=None, user=None):
+    # Accept "breakfast", " Lunch " etc. from the Shortcut; unknown values fall back to the model's guess
+    meal = next((x for x in MEALS if isinstance(meal, str) and x.lower() == meal.strip().lower()), None)
+    user = user.strip()[:40] if isinstance(user, str) and user.strip() else None
     m = URL_RE.search(raw or "")
     if not m:
         b = next((x for x in BARE_RE.finditer(raw or "") if x.group(0).lower().startswith("www.") or "/" in x.group(0)), None)
@@ -245,8 +255,8 @@ def enqueue(raw: str, meal=None, recipe_id=None):
         j = q("SELECT id FROM jobs WHERE url=? AND status IN ('queued','running')", url).fetchone()
         if j:
             return {"status": "queued", "job": j["id"]}
-    cur = q("INSERT INTO jobs(url,meal,recipe_id,status,created,updated) VALUES(?,?,?,?,?,?)",
-            url, meal, recipe_id, "queued", time.time(), time.time())
+    cur = q("INSERT INTO jobs(url,meal,recipe_id,user,status,created,updated) VALUES(?,?,?,?,?,?,?)",
+            url, meal, recipe_id, user, "queued", time.time(), time.time())
     return {"status": "queued", "job": cur.lastrowid}
 
 
@@ -263,7 +273,7 @@ def api_add(body: dict = Body(...), x_recipe_key: str = Header(default="")):
     throttle()
     if not secrets.compare_digest(x_recipe_key, KEY):
         raise HTTPException(401, "bad key")
-    return enqueue(body.get("url") or body.get("text") or "", body.get("meal"))
+    return enqueue(body.get("url") or body.get("text") or "", body.get("meal"), user=body.get("user"))
 
 
 @app.post("/api/ui/add")  # used by the web page; Authentik protects it at the proxy
@@ -395,7 +405,7 @@ def recipes(meal: str = "", q_: str = Query("", alias="q"), sort: str = "new", t
     else:
         rs.sort(key=(lambda r: (r.get("title") or "").lower()) if sort == "az"
                 else (lambda r: r.get("processed_at") or ""), reverse=(sort != "az"))
-    keep = ("id", "title", "meal", "cover", "needs_review", "kind", "has_video", "source_url", "tags", "favorite")
+    keep = ("id", "title", "meal", "cover", "needs_review", "kind", "has_video", "source_url", "tags", "favorite", "added_by")
     counts = {m: 0 for m in MEALS}
     review = favs = 0
     all_tags = set()
