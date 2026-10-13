@@ -15,6 +15,8 @@ from pathlib import Path
 
 import requests
 
+from tags import make_tags
+
 OLLAMA = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/") + "/api/generate"
 VL = os.environ.get("FOODBOX_MODEL") or os.environ.get("RECIPE_VL") or "gemma4:e4b"  # main model; env overrides for A/B tests
 MEALS = ["Breakfast", "Lunch", "Dinner", "Snack", "Dessert", "Other"]
@@ -549,40 +551,8 @@ def extract_times(corpus):
     return out
 
 
-TAG_BAN = re.compile(r"\b(gluten|dairy|nut|soy|egg|lactose|sugar)[- ]?free\b|\bvegan\b|\bvegetarian\b|\bketo\b|\bpaleo\b|"
-                     r"\bhalal\b|\bkosher\b|allerg|healthy|\bdiet|low[- ]?(carb|fat|calorie|sodium)|high[- ]?protein|"
-                     r"whole30|\bquick\b|\beasy\b|\bfast\b|\bsimple\b|\d+[- ]?min", re.I)
-
-TAG_PROMPT = """Suggest 3 to 6 short tags that help find this recipe later. Lowercase, one or two words each.
-Good tags: the main ingredient (chicken, beans, avocado), the cuisine when it is clear (mexican, italian), the dish type (pasta, soup, salad, sandwich, bowl, casserole), the cooking method (grilled, baked, air fryer, one pot, slow cooker, no cook).
-Do NOT use diet or allergy labels (no vegan, vegetarian, gluten-free, dairy-free, keto), no health claims, and no time or difficulty words (quick, easy, 30 minute).
-Do not repeat the meal type ({meal}).
-Return JSON {{"tags": ["...", "..."]}}
-Title: {title}
-Ingredients: {ing}
-Directions: {steps}
-"""
-
-
-def clean_tags(xs, meal=None):
-    out = []
-    for t in xs or []:
-        t = re.sub(r"\s+", " ", re.sub(r"[^\w\s&'-]", "", str(t).lower())).strip()[:24]
-        if not t or t in out or (meal and t == str(meal).lower()) or TAG_BAN.search(t):
-            continue
-        out.append(t)
-    return out[:6]
-
-
 def gen_tags(r):
-    if not r.get("ingredients"):
-        return []
-    try:
-        j = ollama(TAG_PROMPT.format(meal=r.get("meal"), title=r.get("title"), ing=r["ingredients"][:25],
-                                     steps=" ".join(r.get("steps") or [])[:500]), num_ctx=2048, timeout=120)
-    except Exception:
-        return []
-    return clean_tags(j.get("tags"), r.get("meal"))
+    return make_tags(r, lambda prompt: ollama(prompt, num_ctx=2048, timeout=120))
 
 
 def stage(d: Path, key: str, note: str = ""):
