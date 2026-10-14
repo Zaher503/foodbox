@@ -24,7 +24,15 @@ RUN pip install patchright==${PATCHRIGHT_VERSION} \
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+# git fetches the private Keep forks. The token is a BuildKit secret passed through env-only git config,
+# so it is never written to a layer or to disk.
+RUN --mount=type=secret,id=gh_token \
+    apt-get update && apt-get install -y --no-install-recommends git \
+    && GIT_CONFIG_COUNT=1 \
+       GIT_CONFIG_KEY_0="url.https://x-access-token:$(cat /run/secrets/gh_token)@github.com/.insteadOf" \
+       GIT_CONFIG_VALUE_0="https://github.com/" \
+       pip install -r requirements.txt \
+    && apt-get purge -y git && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 COPY app ./app
 

@@ -32,6 +32,8 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          secrets: |
+            gh_token=${{ secrets.PRIVATE_REPO_TOKEN }}
           tags: |
             ghcr.io/zaher503/foodbox:latest
             ghcr.io/zaher503/foodbox:${{ github.event.workflow_run.head_sha || github.sha }}

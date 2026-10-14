@@ -892,6 +892,18 @@ function draw(editing){
   }
   const colA=el("div",{class:"colA"}),colB=el("div",{class:"colB"});
   if(editing||r.ingredients?.length)colA.append(el("h2",{},"Ingredients"),scaler,tbl);
+  if(!editing&&r.ingredients?.length)colA.append(el("button",{type:"button",class:"btn",style:"margin-top:12px",onclick:async e=>{
+    const btn=e.currentTarget;
+    const items=[...ul.querySelectorAll("tr:not(.have)")].map(tr=>{
+      const tx=tr.querySelector(".tx").cloneNode(true);tx.querySelectorAll(".flagnote").forEach(n=>n.remove());
+      return (tr.querySelector(".am").textContent+" "+tx.textContent).replace(/\s+/g," ").trim()}).filter(Boolean);
+    if(!items.length){toast({title:"Nothing to add",text:"Every ingredient is crossed off"});return}
+    if(!confirm(`Add ${items.length} item${items.length===1?"":"s"} to Groceries list?`))return;
+    btn.disabled=true;
+    try{const res=await api("/api/ui/keep",{method:"POST",body:JSON.stringify({items})});
+      toast({title:"Added to Groceries",text:`${res.added} added`+(res.skipped?`, ${res.skipped} already on the list`:"")})}
+    catch(err){toast({kind:"err",title:"Couldn't add to Keep",text:err.message})}
+    btn.disabled=false}},"Add to Groceries (Keep)"));
   if(editing)colA.append(el("button",{type:"button",class:"btn addrow",onclick:()=>{const n=ingRow("");ul.append(n);n.querySelector(".am .ce").focus()}},"+ Ingredient"));
   if(editing||r.steps?.length){
     colB.append(el("h2",{},"Directions"),ol);

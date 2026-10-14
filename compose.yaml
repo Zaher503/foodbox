@@ -45,6 +45,9 @@ services:
       - OLLAMA_URL=http://ollama:11434
       - FOODBOX_MODEL=${FOODBOX_MODEL:-gemma4:e4b}
       - RECIPE_KEY=${RECIPE_KEY:-}
+      - KEEP_EMAIL=${KEEP_EMAIL:-}
+      - KEEP_MASTER_TOKEN=${KEEP_MASTER_TOKEN:-}
+      - KEEP_LIST=${KEEP_LIST:-Groceries}
     volumes:
       - ${FOODBOX_DATA_DIR:-foodbox-data}:/data
       - ${HF_DIR:-hf-cache}:/cache

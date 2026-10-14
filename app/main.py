@@ -322,6 +322,37 @@ def _preview(name):
     return out
 
 
+@app.post("/api/ui/keep")  # push ingredient lines to the Google Keep grocery list
+def ui_keep(body: dict = Body(...)):
+    throttle()
+    email, token = os.environ.get("KEEP_EMAIL", ""), os.environ.get("KEEP_MASTER_TOKEN", "")
+    if not email or not token:
+        raise HTTPException(503, "Keep is not configured (KEEP_EMAIL / KEEP_MASTER_TOKEN)")
+    items = [re.sub(r"\s+", " ", str(x)).strip()[:300] for x in body.get("items") or []]
+    items = [x for x in dict.fromkeys(items) if x][:100]
+    if not items:
+        raise HTTPException(400, "nothing to add")
+    title = os.environ.get("KEEP_LIST", "Groceries")
+    try:
+        import gkeepapi  # private audited fork, see requirements.txt
+        keep = gkeepapi.Keep()
+        keep.authenticate(email, token)
+        note = next((n for n in keep.find(query=title, archived=False, trashed=False)
+                     if isinstance(n, gkeepapi.node.List) and n.title.strip().lower() == title.lower()), None)
+        if note is None:
+            raise HTTPException(404, f'No Keep list named "{title}"')
+        have = {i.text.strip().lower() for i in note.unchecked}
+        new = [x for x in items if x.lower() not in have]
+        for x in new:
+            note.add(x, False)
+        keep.sync()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"Keep error: {str(e)[:150]}")
+    return {"added": len(new), "skipped": len(items) - len(new)}
+
+
 @app.post("/api/ui/manual")  # blank recipe typed in by hand (recipe book, family card, ...)
 def ui_manual(body: dict = Body(default={})):
     throttle()
