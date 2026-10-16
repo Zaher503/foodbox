@@ -35,7 +35,7 @@ header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px so
 .tabs::-webkit-scrollbar{display:none}
 .tab{flex:none;border:0;background:none;padding:8px 10px 10px;color:var(--mute);border-bottom:2px solid transparent;cursor:pointer}
 .tab.on{color:var(--ink);border-color:var(--acc);font-weight:600}
-.tabx{font-size:20px;line-height:1;padding:6px 10px 8px}
+.tabx{display:inline-flex;align-items:center;line-height:0;padding:6px 8px 8px;border-radius:8px 8px 0 0;transition:color .15s,background-color .15s}
 .tab small{color:var(--mute);font-weight:400}
 main{padding:16px;max-width:1100px;margin:0 auto}
 .bar{display:flex;justify-content:flex-end;align-items:center;margin-bottom:12px;color:var(--mute);font-size:14px}
@@ -167,7 +167,12 @@ ol.st li.hd .ce{font-weight:700;color:var(--acc)}
 .times{color:var(--mute);font-size:14px;margin:-4px 0 10px}
 .tagbar{display:flex;gap:6px;overflow-x:auto;padding:8px 0 10px;scrollbar-width:none}
 .tagbar::-webkit-scrollbar{display:none}
-.tagbar:empty{display:none}
+.tagbar:empty,.tagwrap:has(.tagbar:empty){display:none}
+.tagwrap{display:flex;align-items:flex-start;gap:4px}
+.tagwrap .tagbar{flex:1;min-width:0}
+.tagx{display:none;flex:none;border:0;background:none;color:var(--mute);cursor:pointer;padding:4px 6px;margin-top:6px;border-radius:8px;line-height:0;transition:transform .15s,color .15s,background-color .15s}
+.tagx:hover,.tabx:hover{color:var(--acc);background:color-mix(in srgb,var(--acc) 12%,transparent)}
+.sp .tagx{display:block}
 .tg{flex:none;border:1px solid var(--line);background:var(--card);border-radius:99px;padding:3px 10px;font-size:13px;cursor:pointer;color:var(--mute)}
 .tg.on{background:var(--acc);border-color:var(--acc);color:#fff}
 .tagrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 12px}
@@ -215,12 +220,19 @@ a{color:var(--acc)}
 .ck-nav .btn{flex:1;padding:18px;font-size:20px;border-radius:14px}
 .ck-aw{font-size:12px;color:var(--mute);text-align:center;padding-bottom:6px}
 .sp body{overflow:hidden}
-.sp #left{position:fixed;left:0;top:0;bottom:0;width:420px;overflow-y:auto;border-right:1px solid var(--line);background:var(--bg)}
+.sp #left{position:fixed;left:0;top:0;bottom:0;width:var(--lw,420px);overflow-y:auto;border-right:1px solid var(--line);background:var(--bg);transition:transform .22s ease}
+.sp.tuck #left{transform:translateX(-101%)}
+.sp header .row:first-child{padding-left:42px}
 .sp main{max-width:none;margin:0;padding:12px}
 .sp .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 .sp .tabs{flex-wrap:wrap;overflow:visible}
-.sp .tagbar{flex-wrap:wrap;max-height:70px;overflow-y:auto}
-.sp #sheet{display:block;left:420px;z-index:1}
+.sp .tagbar{overflow:hidden}
+.sp .tagwrap.open .tagbar{flex-wrap:wrap;max-height:150px;overflow-y:auto}
+.sp .tagwrap.open .tagx{transform:rotate(180deg)}
+.sp #sheet{display:block;left:var(--lw,420px);z-index:1;transition:left .22s ease}
+.sp.tuck #sheet{left:0}
+.sp.tuck .inner{padding-left:68px}
+.sp.drag #left,.sp.drag #sheet{transition:none}
 .dt:not(.sp) .grid{grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px}
 .sp .inner{max-width:1100px;padding:0 32px 64px}
 .sp .hero{max-height:38vh}
@@ -267,6 +279,28 @@ a{color:var(--acc)}
 table.ing tr.needck td{background:color-mix(in srgb,var(--warn) 20%,transparent)}
 ol.st li.needck{outline:2px solid var(--warn);outline-offset:-2px}
 .flagnote{font-size:12px;color:var(--warn);margin-top:2px}
+
+*{scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--mute) 35%,transparent) transparent}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--mute) 30%,transparent);border-radius:99px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--mute) 55%,transparent);background-clip:content-box}
+.srcbtn{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;font-size:14px;font-weight:600;color:var(--acc);border-color:color-mix(in srgb,var(--acc) 45%,var(--line))}
+.srcbtn svg{flex:none}
+.cmenu button svg{vertical-align:-2px;margin-left:6px;opacity:.7}
+#tuckBtn{display:none;position:fixed;left:10px;top:max(10px,env(safe-area-inset-top));z-index:40;width:34px;height:34px;align-items:center;justify-content:center;border:1px solid var(--line);background:var(--card);color:var(--mute);border-radius:10px;cursor:pointer;padding:0;transition:color .15s,border-color .15s}
+#tuckBtn:hover{color:var(--acc);border-color:var(--acc)}
+.sp #tuckBtn{display:flex}
+.sp.tuck #tuckBtn svg{transform:scaleX(-1)}
+#grip{display:none;position:fixed;z-index:24;top:0;bottom:0;left:calc(var(--lw,420px) - 4px);width:8px;cursor:col-resize;touch-action:none;transition:left .22s ease}
+.sp #grip{display:block}
+.sp.tuck #grip{display:none}
+.sp.drag #grip{transition:none}
+#grip::after{content:"";position:absolute;inset:0 3px;background:var(--acc);opacity:0;transition:opacity .15s}
+#grip i{position:absolute;top:50%;left:50%;width:6px;height:44px;transform:translate(-50%,-50%);border-radius:3px;background:var(--mute);border:1px solid var(--bg);opacity:.55;transition:opacity .15s,background .15s;z-index:1}
+#grip:hover i,#grip:focus-visible i,.drag #grip i{opacity:1;background:var(--acc)}
+#grip:hover::after,#grip:focus-visible::after,.drag #grip::after{opacity:.6}
+.drag{user-select:none;cursor:col-resize}
 </style>
 </head>
 <body>
@@ -283,7 +317,7 @@ ol.st li.needck{outline:2px solid var(--warn);outline-offset:-2px}
     <button class="btn" id="addManual" title="Type a recipe in yourself">Write one</button>
   </div>
   <nav class="tabs" id="tabs"></nav>
-  <div class="tagbar" id="tagbar"></div>
+  <div class="tagwrap" id="tagwrap"><div class="tagbar" id="tagbar"></div><button class="tagx" id="tagx" aria-label="Show all tags" title="All tags"></button></div>
 </header>
 <main>
   <div id="jobs"></div>
@@ -294,6 +328,8 @@ ol.st li.needck{outline:2px solid var(--warn);outline-offset:-2px}
   <div class="empty" id="empty" hidden>Nothing here yet.</div>
 </main>
 </div>
+<button id="tuckBtn" aria-label="Hide sidebar" title="Hide sidebar"></button>
+<div id="grip" role="slider" tabindex="0" aria-label="Resize the sidebar" aria-orientation="horizontal"><i></i></div>
 <div id="sheet"><div class="inner" id="detail"></div></div>
 <datalist id="taglist"></datalist>
 <input type="file" id="file" accept="image/*" multiple hidden>
@@ -306,6 +342,9 @@ const $=s=>document.querySelector(s);
 const el=(t,p={},...k)=>{const e=document.createElement(t);for(const[a,v]of Object.entries(p)){if(a==="class")e.className=v;else if(a.startsWith("on"))e[a]=v;else if(v!==false&&v!=null)e.setAttribute(a,v===true?"":v)}for(const c of k.flat())if(c!=null)e.append(c);return e};
 const api=async(u,o={})=>{const r=await fetch(u,{...o,headers:{"Content-Type":"application/json",...(o.headers||{})}});if(!r.ok)throw new Error((await r.text()).slice(0,200));return r.json()};
 const heartSvg=on=>{const n="http://www.w3.org/2000/svg",v=document.createElementNS(n,"svg"),p=document.createElementNS(n,"path");v.setAttribute("viewBox","0 0 24 24");v.setAttribute("width","18");v.setAttribute("height","18");p.setAttribute("d","M12 20.5S3.5 15.4 3.5 9.4A4.6 4.6 0 0 1 12 7a4.6 4.6 0 0 1 8.5 2.4c0 6-8.5 11.1-8.5 11.1z");p.setAttribute("fill",on?"currentColor":"none");p.setAttribute("stroke","currentColor");p.setAttribute("stroke-width","2");v.append(p);return v};
+const ico=(d,w=14,sw=2)=>{const n="http://www.w3.org/2000/svg",v=document.createElementNS(n,"svg");v.setAttribute("viewBox","0 0 24 24");v.setAttribute("width",w);v.setAttribute("height",w);v.setAttribute("fill","none");v.setAttribute("stroke","currentColor");v.setAttribute("stroke-width",sw);v.setAttribute("stroke-linecap","round");v.setAttribute("stroke-linejoin","round");for(const x of [].concat(d)){const p=document.createElementNS(n,"path");p.setAttribute("d",x);v.append(p)}return v};
+const ICO={right:"M9 6l6 6-6 6",left:"M15 6l-6 6 6 6",down:"M6 9l6 6 6-6",ext:["M14 4h6v6","M20 4l-9 9","M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"],panel:["M4 5h16v14H4z","M9 5v14"]};
+const openExternal=u=>{const a=el("a",{href:u,target:"_blank",rel:"noopener noreferrer"});document.body.append(a);a.click();a.remove()};
 const mq=matchMedia("(min-width:1000px)"),isDT=()=>mq.matches;
 function askConfirm(msg,ok="Delete"){
   return new Promise(res=>{
@@ -474,11 +513,11 @@ function cardMenu(btn,r){
   const same=cm&&cm._for===btn;closeMenu();if(same)return;
   const items=[
     ["Edit",()=>open(r.id,true)],
-    ...(r.source_url?[["Open source ↗",()=>window.open(r.source_url,"_blank","noopener")]]:[]),
+    ...(r.source_url?[["Open source",()=>openExternal(r.source_url),false,true]]:[]),
     ["Delete",async()=>{if(await askConfirm(`Delete "${r.title||"this recipe"}"? It moves to the trash folder on the server.`)){await api("/api/recipes/"+r.id,{method:"DELETE"});
       if(current&&current.id===r.id){current=null;$("#detail").replaceChildren();if(pushed){pushed=false;history.back()}else history.replaceState(null,"","#");$("#sheet").classList.remove("on");syncSp()}
       toast({kind:"ok",title:"Recipe deleted",text:r.title||"Untitled"});load()}},true]];
-  cm=el("div",{class:"cmenu"},items.map(([t,fn,danger])=>el("button",{class:danger?"danger":"",onclick:()=>{closeMenu();fn()}},t)));
+  cm=el("div",{class:"cmenu"},items.map(([t,fn,danger,ext])=>el("button",{class:danger?"danger":"",onclick:()=>{closeMenu();fn()}},t,ext?ico(ICO.ext,13):null)));
   cm._for=btn;document.body.append(cm);
   const b=btn.getBoundingClientRect(),w=cm.offsetWidth,h=cm.offsetHeight;
   cm.style.left=Math.max(8,Math.min(b.left,innerWidth-w-8))+"px";
@@ -586,6 +625,9 @@ function renderTags(){
     onclick:()=>{tagSel=tagSel.includes(t)?tagSel.filter(x=>x!==t):[...tagSel,t];load()}},t," ",cnt[t]??0)));
   $("#taglist").replaceChildren(...(data.all_tags||[]).map(t=>el("option",{value:t})));
 }
+let tagsOpen=false;
+{const b=$("#tagx");b.append(ico(ICO.down,16));b.onclick=()=>{tagsOpen=!tagsOpen;syncTags()}}
+function syncTags(){$("#tagwrap").classList.toggle("open",tagsOpen);$("#tagx").title=tagsOpen?"Fewer tags":"All tags"}
 let tabsOpen=false;
 function renderTabs(){
   const n=data.counts,total=Object.values(n).reduce((a,b)=>a+b,0);
@@ -593,7 +635,7 @@ function renderTabs(){
   const more=tab!=="All"&&tab!=="Favorites";  // a hidden tab being active keeps the row open
   const shown=tabsOpen||more?items:items.slice(0,2);
   const btns=shown.map(([k,c])=>el("button",{class:"tab"+(k===tab?" on":""),onclick:()=>{tab=k;load()}},k==="Review"?"Needs review":k," ",el("small",{},c)));
-  if(!more)btns.push(el("button",{class:"tab tabx","aria-label":tabsOpen?"Collapse filters":"Expand filters",title:tabsOpen?"Collapse":"More",onclick:()=>{tabsOpen=!tabsOpen;renderTabs()}},tabsOpen?"‹":"›"));
+  if(!more)btns.push(el("button",{class:"tab tabx","aria-label":tabsOpen?"Collapse filters":"Expand filters",title:tabsOpen?"Collapse":"More",onclick:()=>{tabsOpen=!tabsOpen;renderTabs()}},ico(tabsOpen?ICO.left:ICO.right,16)));
   $("#tabs").replaceChildren(...btns);
 }
 async function load(){
@@ -861,7 +903,7 @@ function draw(editing){
   paint();
   kids.push(editing?E.h1:el("h1",{},r.title||"Untitled"));
   kids.push(el("div",{class:"meta"},sel,servEl,heart,
-    editing&&!r.source_url?E.sn2:(r.source_url?el("a",{href:r.source_url,target:"_blank",rel:"noopener noreferrer"},"Source ↗"):(r.source_note?el("span",{class:"mute small"},r.source_note):null))));
+    editing&&!r.source_url?E.sn2:(r.source_url?el("a",{class:"btn srcbtn",href:r.source_url,target:"_blank",rel:"noopener noreferrer"},"Source",ico(ICO.ext,14)):(r.source_note?el("span",{class:"mute small"},r.source_note):null))));
   if(editing)kids.push(el("div",{class:"times"},"Prep ",E.pi," · Cook ",E.ci," · Total ",E.ti," min"));
   else{const tl=timesLine(r);if(tl)kids.push(tl)}
   kids.push(tagEditor(r));
@@ -991,6 +1033,21 @@ addEventListener("popstate",()=>{
   else{pushed=true;open(h,false,true).catch(()=>{})}
 });
 const setDT=()=>{document.documentElement.classList.toggle("dt",isDT());syncSp();markSel()};
+// sidebar: tuck away and drag to resize (desktop split view)
+{
+  const root=document.documentElement,LW_MIN=300,LW_MAX=720,LW_DEF=420;
+  let lw=+store.get("lw")||LW_DEF;
+  const setLw=w=>{lw=Math.round(Math.max(LW_MIN,Math.min(LW_MAX,w,innerWidth-240)));root.style.setProperty("--lw",lw+"px");$("#grip").setAttribute("aria-valuenow",lw)};
+  const setTuck=t=>{root.classList.toggle("tuck",t);store.set("tuck",t?"1":"0");const b=$("#tuckBtn");b.setAttribute("aria-label",t?"Show sidebar":"Hide sidebar");b.title=b.getAttribute("aria-label")};
+  const g=$("#grip");g.setAttribute("aria-valuemin",LW_MIN);g.setAttribute("aria-valuemax",LW_MAX);
+  $("#tuckBtn").append(ico(ICO.panel,18));$("#tuckBtn").onclick=()=>setTuck(!root.classList.contains("tuck"));
+  g.onpointerdown=e=>{root.classList.add("drag");g.setPointerCapture(e.pointerId)};
+  g.onpointermove=e=>{if(root.classList.contains("drag"))setLw(e.clientX)};
+  g.onpointerup=g.onpointercancel=()=>{if(!root.classList.contains("drag"))return;root.classList.remove("drag");store.set("lw",lw)};
+  g.ondblclick=()=>{setLw(LW_DEF);store.set("lw",lw)};
+  g.onkeydown=e=>{if(e.key==="ArrowLeft"||e.key==="ArrowRight"){e.preventDefault();setLw(lw+(e.key==="ArrowRight"?20:-20));store.set("lw",lw)}};
+  setLw(lw);setTuck(store.get("tuck")==="1");
+}
 setDT();mq.addEventListener("change",setDT);
 (async()=>{await load();startPoll();const h=location.hash.slice(1);
   if(h)open(h).catch(()=>{})})();
