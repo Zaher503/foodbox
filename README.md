@@ -5,6 +5,8 @@ A self-hosted recipe box. Send it a TikTok, YouTube/Shorts or recipe-page link a
 ## Features
 
 - **Add by link** from a phone Share Sheet shortcut, the web page's "+ Add" box, or a PowerShell script. Duplicate links return the existing recipe.
+- **Paste the full text:** copy a recipe from anywhere (notes app, a text, a screenshot you typed out, a family card) and paste the whole thing — ingredients and directions, in any order — into the "Paste text" box; the local model sorts it into title, ingredients and steps. Same grounding checks as every other source (no invented quantities), and pasting the same text twice returns the existing recipe.
+- **Write one by hand** for a recipe book or family card with no text to paste.
 - **TikTok / YouTube:** yt-dlp downloads the video, faster-whisper transcribes it, frames are read for on-screen text, and a local vision-language model (Ollama, `gemma4:e4b`) structures the recipe.
 - **Recipe pages:** uses schema.org Recipe data when present (exact quantities, no AI), otherwise extracts the page text and lets the local model structure it. Pages behind a Cloudflare challenge are fetched with a stealth Chromium (patchright) (under Xvfb on Linux).
 - **No invented numbers:** every quantity, time and nutrition value must appear in the source or it is removed and the recipe is flagged "Needs review".

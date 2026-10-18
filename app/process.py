@@ -2,6 +2,7 @@
 import base64
 import ctypes
 import glob
+import hashlib
 import html as htmllib
 import json
 import os
@@ -376,6 +377,32 @@ PAGE TEXT:
 {text}
 """
 
+PASTE_PROMPT = """You extract a cooking recipe from pasted text. Use ONLY the text below.
+Output JSON: {{"title": str, "meal": one of {meals}, "servings": str or null,
+"ingredients": [str, ...], "steps": [str, ...]}}
+Rules:
+- Skip any intro, backstory, tips, ads or unrelated text that came along with the paste. Just the recipe.
+- NEVER guess. Copy quantities, times and temperatures exactly as written. Do not add ingredients or steps that are not stated.
+- If the text has no recognizable recipe, return empty "ingredients" and "steps" lists.
+- Ingredients: "quantity unit item, preparation", one per entry, in the order listed. Keep the preparation exactly as written ("diced", "cut into 1 inch pieces", "boneless skinless"). If a line has no quantity, write the item alone.
+- Steps: the method in order, one action per entry, short imperative sentences. Keep times and temperatures. If the ingredients and steps are mixed together or out of order, sort them out; do not reword beyond that.
+- If the method is split into parts with their own titles ("For the sauce:"), keep each title as its own entry written "## For the sauce" before that part's steps. Never put a title in a step. No headings when the method is one part.
+- Title: the recipe's own name if it is stated in the text; otherwise a short, plain title describing the dish.
+- Servings: only if the text states a serving count or yield, otherwise null.
+
+PASTED TEXT:
+{text}
+"""
+
+
+def from_pasted_text(d: Path, fx: dict, log: dict):
+    text = fx.get("pasted_text", "")
+    r = ollama(PASTE_PROMPT.format(meals=MEALS, text=text[:8000]), num_ctx=8192, timeout=300)
+    r, dropped = finish(r, text, fx.get("page_title") or "Untitled")
+    log["paste_chars"], log["dropped"] = len(text), dropped
+    return r
+
+
 ING_HEAD = re.compile(r"\W*(ingredients?|what you.?ll need|you will need)\W*", re.I)
 
 
@@ -644,6 +671,10 @@ def process(d: Path):
             stage(d, "writing")
             r = from_page_text(d, fx, log)
             nut_corpus = (d / "page.txt").read_text(encoding="utf-8")
+    elif fx["kind"] == "text":
+        stage(d, "writing")
+        r = from_pasted_text(d, fx, log)
+        nut_corpus = fx.get("pasted_text", "")
     else:
         video = d / "source.mp4"
         stage(d, "transcribing")
@@ -688,6 +719,9 @@ def process(d: Path):
     cover = "thumbnail.jpg" if (d / "thumbnail.jpg").exists() else None
     r.update(source_url=fx["source_url"], kind=fx["kind"], cover=cover,
              has_video=(d / "source.mp4").exists(), processed_at=time.strftime("%Y-%m-%dT%H:%M:%S"))
+    if fx["kind"] == "text":
+        r["source_note"] = "Pasted recipe"
+        r["paste_hash"] = hashlib.sha1(re.sub(r"\s+", " ", fx.get("pasted_text", "").strip().lower()).encode()).hexdigest()
     (d / "recipe.json").write_text(json.dumps(r, indent=2, ensure_ascii=False), encoding="utf-8")
     log["total_s"] = round(time.time() - t0, 1)
     return r, log

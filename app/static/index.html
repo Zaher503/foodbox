@@ -315,6 +315,12 @@ ol.st li.needck{outline:2px solid var(--warn);outline-offset:-2px}
     <textarea id="addUrl" rows="1" placeholder="Paste a link, or several (one per line)" spellcheck="false"></textarea>
     <button class="btn pri" id="addGo">Save</button>
     <button class="btn" id="addManual" title="Type a recipe in yourself">Write one</button>
+    <button class="btn" id="addPaste" title="Paste the full recipe text and let the AI sort it out">Paste text</button>
+  </div>
+  <div class="row" id="pasteRow" style="display:none;margin-top:8px;align-items:flex-end">
+    <textarea id="pasteBox" rows="6" style="resize:vertical;max-height:420px" placeholder="Paste the full recipe here — ingredients and instructions, in any order" spellcheck="false"></textarea>
+    <button class="btn pri" id="pasteGo">Save</button>
+    <button class="btn" id="pasteCancel">Cancel</button>
   </div>
   <nav class="tabs" id="tabs"></nav>
   <div class="tagwrap" id="tagwrap"><div class="tagbar" id="tagbar"></div><button class="tagx" id="tagx" aria-label="Show all tags" title="All tags"></button></div>
@@ -994,7 +1000,7 @@ $("#file").onchange=async e=>{
   if(ok===n)toast({kind:"ok",title:pl(ok)+" added",text:"Saved to the gallery"});
   else toast({kind:"err",title:ok?`${ok} of ${n} photos added`:"Upload failed",text:"Some photos could not be uploaded"});
 };
-$("#addBtn").onclick=()=>{const r=$("#addRow");r.style.display=r.style.display==="none"?"flex":"none";$("#addUrl").focus()};
+$("#addBtn").onclick=()=>{$("#pasteRow").style.display="none";const r=$("#addRow");r.style.display=r.style.display==="none"?"flex":"none";$("#addUrl").focus()};
 const addBox=$("#addUrl"),NL=String.fromCharCode(10);
 addBox.oninput=()=>{addBox.style.height="auto";addBox.style.height=Math.min(addBox.scrollHeight,180)+"px"};
 addBox.onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey&&!addBox.value.trim().includes(NL)){e.preventDefault();$("#addGo").click()}};
@@ -1024,6 +1030,21 @@ $("#addManual").onclick=async()=>{
   try{const res=await api("/api/ui/manual",{method:"POST",body:JSON.stringify({})});
     $("#addRow").style.display="none";await open(res.id,true)}
   catch(e){toast({kind:"err",title:"Couldn\u2019t start a new recipe",text:e.message})}
+};
+const pasteBox=$("#pasteBox");
+$("#addPaste").onclick=()=>{$("#addRow").style.display="none";$("#pasteRow").style.display="flex";pasteBox.focus()};
+$("#pasteCancel").onclick=()=>{$("#pasteRow").style.display="none";pasteBox.value=""};
+$("#pasteGo").onclick=async()=>{
+  const t=pasteBox.value.trim();if(!t)return;
+  const btn=$("#pasteGo");btn.disabled=true;btn.textContent="Sending\u2026";
+  try{
+    const res=await api("/api/ui/paste",{method:"POST",body:JSON.stringify({text:t})});
+    pasteBox.value="";$("#pasteRow").style.display="none";
+    if(res.status==="exists")toast({title:"Already in your library",text:"That recipe is already saved",action:"Open",onAction:()=>open(res.recipe_id)});
+    else{seenJobs[res.job]="queued";toast({title:"Recipe received",text:"Sorting it out\u2026"});scrollTo({top:0,behavior:"smooth"});$("#left").scrollTo({top:0,behavior:"smooth"})}
+    await jobs();startPoll();
+  }catch(e){toast({kind:"err",title:"Couldn\u2019t add that recipe",text:e.message})}
+  finally{btn.disabled=false;btn.textContent="Save"}
 };
 let tm;$("#q").oninput=()=>{clearTimeout(tm);tm=setTimeout(load,250)};
 $("#sort").value=sort;$("#sort").onchange=e=>{sort=e.target.value;store.set("sort",sort);load()};
