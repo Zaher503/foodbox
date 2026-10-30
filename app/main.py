@@ -436,7 +436,8 @@ def recipes(meal: str = "", q_: str = Query("", alias="q"), sort: str = "new", t
     else:
         rs.sort(key=(lambda r: (r.get("title") or "").lower()) if sort == "az"
                 else (lambda r: r.get("processed_at") or ""), reverse=(sort != "az"))
-    keep = ("id", "title", "meal", "cover", "needs_review", "kind", "has_video", "source_url", "tags", "favorite", "added_by")
+    keep = ("id", "title", "meal", "cover", "needs_review", "kind", "has_video", "source_url", "tags", "favorite", "added_by",
+            "prep_min", "cook_min", "total_min")
     counts = {m: 0 for m in MEALS}
     review = favs = 0
     all_tags = set()
