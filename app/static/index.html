@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#fafaf7">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
@@ -301,6 +301,129 @@ ol.st li.needck{outline:2px solid var(--warn);outline-offset:-2px}
 #grip:hover i,#grip:focus-visible i,.drag #grip i{opacity:1;background:var(--acc)}
 #grip:hover::after,#grip:focus-visible::after,.drag #grip::after{opacity:.6}
 .drag{user-select:none;cursor:col-resize}
+/* Apple HIG layer (shared) */
+/* Shared Apple-HIG layer: semantic colors, SF type scale, system-style controls, grouped detail view */
+html:root{
+  --bg:#fff;--card:#fff;--bg2:#f5f5f7;--fill:rgba(118,118,128,.12);--fill2:rgba(118,118,128,.2);
+  --ink:#1d1d1f;--mute:#6e6e73;--line:rgba(60,60,67,.14);
+  --warn:#8a5300;--warnbg:#fff3d1;--s1:transparent;--s2:transparent;
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  --glass:rgba(255,255,255,.72);
+}
+@media (prefers-color-scheme:dark){html:root{
+  --bg:#000;--card:#1c1c1e;--bg2:#1c1c1e;--fill:rgba(118,118,128,.24);--fill2:rgba(118,118,128,.36);
+  --ink:#f5f5f7;--mute:#a1a1a6;--line:rgba(84,84,88,.5);--warn:#ffd60a;--warnbg:#3a2f00;--glass:rgba(28,28,30,.7);
+}}
+html body{font-family:var(--font);font-size:17px;line-height:1.35;letter-spacing:-.01em;background:var(--bg);-webkit-font-smoothing:antialiased}
+html body button,html body input,html body select,html body textarea{font-family:inherit}
+
+/* Controls */
+html .btn{border:0;background:var(--fill);color:var(--ink);border-radius:99px;padding:8px 16px;font-size:15px;font-weight:500;min-height:36px}
+html .btn:not(.pri):not(.danger):not(.heroedit):not(.heroadd):hover{background:var(--fill2);border-color:transparent}
+html .btn.pri{background:var(--acc);color:#fff}
+html .btn.pri:hover{filter:none;background:color-mix(in srgb,var(--acc) 88%,#000)}
+html .btn.danger{color:#d70015}
+html .btn:focus-visible,html .tab:focus-visible,html .tg:focus-visible,html .card:focus-visible{outline:3px solid color-mix(in srgb,var(--acc) 55%,transparent);outline-offset:2px}
+html .row input[type=search],html .row input[type=url],html .row textarea{border:0;background-color:var(--fill);border-radius:10px;padding:9px 12px 9px 36px;font-size:17px;min-height:36px;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238e8e93' stroke-width='2.4' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='6.5'/%3E%3Cpath d='M16 16l4.5 4.5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:11px 50%;background-size:16px}
+html .row textarea{background-image:none;padding-left:12px}
+html .row input::placeholder{color:var(--mute)}
+html .row input:focus{outline:3px solid color-mix(in srgb,var(--acc) 45%,transparent);outline-offset:0}
+
+/* Segmented control (All / Favorites) */
+html .tabs{display:inline-flex;gap:2px;margin:12px 0 0;padding:2px;background:var(--fill);border-radius:9px;overflow:visible;width:max-content;max-width:100%}
+html .tab{border:0;border-radius:7px;padding:5px 14px;font-size:14px;font-weight:500;color:var(--ink)}
+html .tab small{color:var(--mute);font-weight:400;margin-left:2px}
+html .tab.on{background:var(--card);color:var(--ink);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.14),0 0 0 .5px rgba(0,0,0,.04)}
+html .tab:hover,html .tab.on:hover{border-color:transparent;color:var(--ink)}
+html .tab.tabx{padding:5px 8px;color:var(--mute)}
+@media (prefers-color-scheme:dark){html .tab.on{background:#636366}}
+
+/* Tag filters: quiet capsules, one line */
+html .tagbar{gap:6px;padding:12px 0 2px}
+html .tg{border:0;background:var(--fill);color:var(--ink);font-size:14px;padding:5px 12px;min-height:30px}
+html .tg:not(.on):hover{background:var(--fill2);color:var(--ink);border-color:transparent}
+html .tg.on{background:var(--ink);color:var(--bg)}
+html .tagx{margin-top:10px}
+
+/* Cards: the photograph is the interface */
+html .card{background:none;border:0;border-radius:0;overflow:visible;font-family:inherit;color:var(--ink)}
+html .card .ph{aspect-ratio:4/5;border-radius:14px;background-color:var(--bg2);box-shadow:0 0 0 .5px rgba(0,0,0,.12),0 2px 8px rgba(0,0,0,.08);transition:transform .25s cubic-bezier(.2,.8,.2,1)}
+html .card:hover .ph{transform:scale(1.015)}
+html .card .t{height:auto;padding:10px 2px 0;font-size:15px;font-weight:500;line-height:1.28;letter-spacing:-.012em}
+html .card.sel{outline:0}
+html .card.sel .ph{box-shadow:0 0 0 3px var(--acc)}
+html .flag{left:8px;bottom:8px;background:var(--glass);backdrop-filter:blur(12px) saturate(1.6);-webkit-backdrop-filter:blur(12px) saturate(1.6);color:var(--ink);font-weight:600;font-size:11px;padding:3px 9px}
+html .heart,html .kebab{background:var(--glass);color:var(--ink);backdrop-filter:blur(12px) saturate(1.6);-webkit-backdrop-filter:blur(12px) saturate(1.6);width:32px;height:32px}
+html .heart.on{color:#ff3b30}
+html .grid .sec{font-size:22px;font-weight:700;letter-spacing:-.02em}
+html .grid .sec small{font-size:15px;font-weight:400}
+html .bar{font-size:15px}
+html .bar select{font-size:15px;color:var(--acc);font-weight:500}
+
+/* Detail: grouped, inset, quiet */
+html .top .btn{box-shadow:none}
+html .top .btn:nth-child(2){background:var(--acc);color:#fff}
+html .hero{border-radius:20px;box-shadow:0 0 0 .5px rgba(0,0,0,.1),0 8px 30px rgba(0,0,0,.12)}
+html h1{font-size:34px;line-height:1.1;font-weight:700;letter-spacing:-.03em;margin:22px 0 10px}
+html .meta{font-size:15px;color:var(--mute);gap:10px}
+html .meta select{border:0;background:var(--fill);border-radius:99px;padding:5px 12px;font-size:14px;font-weight:500}
+html .srcbtn{background:none;color:var(--acc);padding:6px 4px;border:0}
+html .chip{border:0;background:var(--fill);font-size:14px;padding:4px 4px 4px 12px}
+html .taginp{border:1px dashed var(--line);font-size:14px}
+html h2{font-size:22px;letter-spacing:-.02em;text-transform:none;color:var(--ink);font-weight:700;margin:28px 0 10px}
+html .scaler{font-size:15px}
+html .stepper{border:0;background:var(--fill);border-radius:9px}
+html table.ing{background:var(--bg2);border-radius:14px;border-collapse:separate;border-spacing:0;padding:0 16px;display:block}
+html table.ing tbody{display:table;width:100%}
+html table.ing td{padding:11px 0;border-bottom:.5px solid var(--line);font-size:17px}
+html table.ing tr:last-child td{border-bottom:0}
+html table.ing td.am{width:6.5em;font-weight:600;font-variant-numeric:tabular-nums;padding-right:12px;white-space:nowrap}
+html table.ing td.cb{width:34px}
+html table.ing input[type=checkbox]{width:22px;height:22px;accent-color:var(--acc)}
+html ol.st li{background:none!important;border-radius:0;margin:0;padding:14px 0 14px 40px;border-bottom:.5px solid var(--line);font-size:17px;line-height:1.45}
+html ol.st.num li::before{background:none;color:var(--acc);width:26px;height:auto;left:0;top:14px;transform:none;font-size:17px;font-weight:700;font-variant-numeric:tabular-nums;justify-content:flex-start}
+html ol.st li.hd{border:0;padding:20px 0 4px;color:var(--ink);font-size:17px}
+html .nut{border:0;background:var(--bg2);border-radius:14px}
+html #dlg .box,html .cmenu,html .hmenu{border:.5px solid var(--line);background:var(--glass);backdrop-filter:blur(30px) saturate(1.8);-webkit-backdrop-filter:blur(30px) saturate(1.8);border-radius:14px}
+html .btn.dangerfill{background:#d70015;color:#fff}
+@media (prefers-reduced-transparency:reduce){html .flag,html .heart,html .kebab,html .cmenu,html #dlg .box{backdrop-filter:none;background:var(--card)}}
+@media (prefers-reduced-motion:reduce){html .card .ph{transition:none}html .card:hover .ph{transform:none}}
+html table.ing td.tx{border-left:0;padding-left:0}
+html table.ing td.am{width:5.5em}
+
+/* Master-detail layout and accent */
+/* B: Master-detail. Desktop, light, Mail-style list on the left, grouped recipe on the right. */
+html:root{--acc:#1f7a4d}
+html.sp #left{background:var(--bg2);border-right:.5px solid var(--line)}
+html header{background:var(--glass);backdrop-filter:blur(30px) saturate(1.8);-webkit-backdrop-filter:blur(30px) saturate(1.8);border-bottom:.5px solid var(--line);padding:14px 16px 10px}
+html.sp header .row:first-child{padding-left:0}
+html header::before{content:"Recipes";display:block;font-size:34px;font-weight:700;letter-spacing:-.035em;margin:0 0 10px;line-height:1.1}
+html.sp header::before{font-size:28px;margin-left:44px}
+html.sp .tabs{width:100%;display:flex}
+html.sp .tab{flex:1;text-align:center}
+html.sp .tab.tabx{flex:none}
+html.sp main{padding:8px 8px 40px}
+html.sp .grid{grid-template-columns:1fr;gap:0}
+html.sp .cw{border-radius:10px}
+html.sp .cw+.cw{margin-top:2px}
+html.sp .card{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:10px;width:100%}
+html.sp .card:hover{background:var(--fill)}
+html.sp .card .ph{flex:none;width:64px;height:64px;aspect-ratio:auto;border-radius:10px;box-shadow:0 0 0 .5px rgba(0,0,0,.14);transform:none!important}
+html.sp .card .t{flex:1;min-width:0;padding:0 28px 0 0;font-size:15px;height:auto}
+html.sp .card.sel{background:var(--acc);color:#fff}
+html.sp .card.sel .ph{box-shadow:0 0 0 .5px rgba(255,255,255,.4)}
+html.sp .heart{display:none}
+html.sp .kebab{top:50%;bottom:auto;right:10px;transform:translateY(-50%);width:28px;height:28px;background:none;backdrop-filter:none}
+html.sp .flag{display:none}
+html.sp .inner{max-width:860px;padding:0 40px 80px}
+html.sp .top{background:var(--glass);backdrop-filter:blur(30px) saturate(1.8);-webkit-backdrop-filter:blur(30px) saturate(1.8);margin:0 -40px;padding:12px 40px;border-bottom:.5px solid var(--line);justify-content:flex-end}
+html.sp .top .back{display:none}
+html.sp .hero{max-height:340px;border-radius:20px}
+html.sp .cols{grid-template-columns:minmax(300px,380px) minmax(0,1fr);gap:48px}
+@media (prefers-color-scheme:dark){html:root{--acc:#30d158}
+html .btn.pri,html .top .btn:nth-child(2),html.sp .card.sel,html .tab.on{color:#000}html .tab.on{color:var(--ink)}
+html.sp .card.sel .t{color:#000}}
 </style>
 </head>
 <body>
