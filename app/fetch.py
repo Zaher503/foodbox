@@ -52,6 +52,33 @@ def make_dir(url: str, title: str) -> Path:
     return d
 
 
+def make_thumbs(d: Path, n: int = 8) -> list:
+    """Stills spread evenly across the video, kept in thumbs/ as cover candidates."""
+    video = d / "source.mp4"
+    try:
+        dur = float(subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(video)],
+            check=True, capture_output=True, text=True, timeout=60).stdout.strip())
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return []
+    out = d / "thumbs"
+    out.mkdir(exist_ok=True)
+    for old in out.glob("t_*.jpg"):
+        old.unlink()
+    made = []
+    for i in range(n):
+        f = out / f"t_{i + 1:02d}.jpg"
+        try:
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{dur * (i + 0.5) / n:.2f}", "-i", str(video),
+                            "-frames:v", "1", "-vf", "scale=720:-2", "-q:v", "3", str(f)],
+                           check=True, capture_output=True, timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if f.exists() and f.stat().st_size:
+            made.append(f.name)
+    return made
+
+
 def fetch_video(url: str) -> Path:
     info = json.loads(subprocess.run(
         [*YTDLP, "--no-warnings", "--skip-download", "--dump-single-json", url],
@@ -73,6 +100,7 @@ def fetch_video(url: str) -> Path:
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     }
     (d / "fetch.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    make_thumbs(d)  # a failure here never fails the import: the site thumbnail is still the cover
     return d
 
 

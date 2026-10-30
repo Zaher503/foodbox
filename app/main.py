@@ -99,11 +99,13 @@ def load(d: Path) -> dict:
         if (d / "shots").exists() else []
     r["has_page"] = (d / "page.html").exists()
     r["has_thumb"] = (d / "thumbnail.jpg").exists()
+    r["thumbs"] = sorted(f"thumbs/{f.name}" for f in (d / "thumbs").glob("t_*.jpg")) if (d / "thumbs").exists() else []
+    r["has_video"] = (d / "source.mp4").exists() or r.get("has_video", False)
     return r
 
 
 def save(d: Path, r: dict):
-    r = {k: v for k, v in r.items() if k not in ("id", "photos", "has_page", "has_thumb")}
+    r = {k: v for k, v in r.items() if k not in ("id", "photos", "has_page", "has_thumb", "thumbs")}
     tmp = d / "recipe.json.tmp"
     tmp.write_text(json.dumps(r, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp.replace(d / "recipe.json")
@@ -137,7 +139,7 @@ def write_stub(d: Path, url: str, err: str):
              "ingredients": [], "steps": [], "source_url": url, "kind": fx.get("kind", "video"),
              "cover": "thumbnail.jpg" if (d / "thumbnail.jpg").exists() else None,
              "has_video": (d / "source.mp4").exists(),
-             "needs_review": f"failed: {err[:200]}", "processed_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
+             "needs_review": f"failed: {err[:300]}", "processed_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
 
 
 # ---------- worker ----------
@@ -149,6 +151,18 @@ def unload_model():
                       json={"model": os.environ.get("FOODBOX_MODEL") or os.environ.get("RECIPE_VL") or "gemma4:e4b", "keep_alive": 0}, timeout=20)
     except Exception:
         pass
+
+
+def explain(e: Exception) -> str:
+    """The reason a job failed: the tool's own last ERROR line when there is one, not the long command line."""
+    err = getattr(e, "stderr", None)
+    if isinstance(err, bytes):
+        err = err.decode("utf-8", "replace")
+    lines = [ln.strip() for ln in err.splitlines() if ln.strip()] if isinstance(err, str) else []
+    if not lines:
+        return str(e)
+    line = next((ln for ln in reversed(lines) if ln.startswith("ERROR")), lines[-1])
+    return re.sub(r";? ?please report this issue.*", "", line)  # yt-dlp's boilerplate tail
 
 
 def run_job(job):
@@ -191,8 +205,7 @@ def run_job(job):
             save(d, r)
         q("UPDATE jobs SET status='done', recipe_id=?, updated=? WHERE id=?", d.name, time.time(), job["id"])
     except Exception as e:
-        err = (getattr(e, "stderr", "") or "") if isinstance(getattr(e, "stderr", ""), str) else ""
-        msg = (str(e) + " " + err).strip()
+        msg = explain(e).strip()
         m = re.search(r"Error\('(.+?)'\)", msg)
         msg = (m.group(1) if m else msg)[:300]
         if "instagram.com" in url:
@@ -467,6 +480,11 @@ def patch(rid: str, body: dict = Body(...)):
     for k in ("title", "servings", "source_note"):
         if k in body:
             r[k] = str(body[k]).strip()[:200] or None
+    if "source_url" in body:
+        u = str(body["source_url"] or "").strip()
+        if u and not re.fullmatch(r"https?://\S+", u, re.I):
+            raise HTTPException(400, "the source link must start with http:// or https://")
+        r["source_url"] = u[:2000]
     for k in ("ingredients", "steps"):
         if k in body:
             r[k] = [str(x).strip() for x in body[k] if str(x).strip()][:200]
@@ -510,7 +528,8 @@ def patch(rid: str, body: dict = Body(...)):
             raise HTTPException(400, "bad nutrition")
     if "cover" in body:
         c = body["cover"]
-        ok = c == "thumbnail.jpg" or (c.startswith("shots/") and (d / c).resolve().parent == (d / "shots").resolve())
+        ok = c == "thumbnail.jpg" or any(c.startswith(p + "/") and (d / c).resolve().parent == (d / p).resolve()
+                                         for p in ("shots", "thumbs"))
         if not ok or not (d / c).exists():
             raise HTTPException(400, "bad cover")
         r["cover"] = c
@@ -547,6 +566,17 @@ def reprocess(rid: str):
             shutil.move(str(dest), str(d))
             raise
     return enqueue(r["source_url"], recipe_id=d.name)
+
+
+@app.post("/api/recipes/{rid}/thumbs")
+def make_thumbs(rid: str):
+    """(Re)cut cover candidates from the saved video: stills spread across its length."""
+    d = rdir(rid)
+    if not (d / "source.mp4").exists():
+        raise HTTPException(400, "this recipe has no saved video")
+    if not fetch.make_thumbs(d):
+        raise HTTPException(500, "could not read frames from the video")
+    return load(d)
 
 
 @app.post("/api/recipes/{rid}/shots")

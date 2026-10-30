@@ -439,6 +439,27 @@ html .warn{border-radius:14px}
   html #detail>*:not(.herow):not(.top){margin-left:18px;margin-right:18px}
   html #detail h1{font-size:28px}
 }
+
+html #dlg .box{background:var(--card);backdrop-filter:none;-webkit-backdrop-filter:none}
+html .rlink{color:var(--acc);font-weight:600;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px;cursor:pointer}
+html .rlink:hover{text-decoration-style:solid}
+html .subsrc{font-size:14px;color:var(--mute)}
+html .srcrow{display:grid;gap:8px;margin-bottom:14px}
+html .srcrow .lbl{font-size:13px;font-weight:600;color:var(--mute)}
+html .srcinp{width:100%;border:0;background:var(--fill);border-radius:10px;padding:9px 12px;min-height:36px;font-size:16px}
+html .srcinp:focus{outline:2px solid var(--acc)}
+html #dlg .fbox{max-width:560px}
+html #dlg .pbox{max-width:440px}
+html #dlg h3{margin:0 0 12px;font:600 18px var(--display)}
+.frames{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:0 0 16px}
+.fr{position:relative;padding:0;border:0;background:var(--fill);border-radius:10px;overflow:hidden;cursor:pointer;aspect-ratio:4/5}
+.fr img{width:100%;height:100%;object-fit:cover;display:block}
+.fr.on{box-shadow:0 0 0 3px var(--accf)}
+.fr span{position:absolute;left:4px;bottom:4px;background:var(--glass);border-radius:99px;padding:1px 8px;font-size:11px;font-weight:600}
+.plist{display:flex;flex-direction:column;max-height:50vh;overflow:auto;margin:10px 0}
+.pitem{text-align:left;border:0;background:none;padding:10px 12px;border-radius:8px;cursor:pointer;font-size:15px}
+.pitem:hover{background:var(--fill)}
+@media (max-width:520px){.frames{grid-template-columns:repeat(3,1fr)}}
 </style>
 </head>
 <body>
@@ -626,12 +647,88 @@ function paintPics(){
     }));
   }
 }
+// links to other recipes live in step text as [[Title|recipe-id]]; the editor shows [[Title]] and maps it back on save
+const RL=/\[\[([^\]|]+)\|([\w.\-]+)\]\]/g;
+let linkMap=new Map();
+const showLinks=t=>t.replace(RL,(m,ti,id)=>{linkMap.set(ti,id);return"[["+ti+"]]"});
+const hideLinks=t=>t.replace(/\[\[([^\]|]+)\]\]/g,(m,ti)=>linkMap.has(ti)?`[[${ti}|${linkMap.get(ti)}]]`:m);
+const plainLinks=t=>t.replace(RL,"$1");
+const goRecipe=(id,title)=>e=>{e.preventDefault();open(id).catch(()=>toast({kind:"err",title:"Recipe not found",text:title}))};
+function linkNodes(t){
+  const out=[];let i=0,m;RL.lastIndex=0;
+  while((m=RL.exec(t))){
+    if(m.index>i)out.push(t.slice(i,m.index));
+    out.push(el("a",{class:"rlink",href:"#"+m[2],onclick:goRecipe(m[2],m[1])},m[1]));i=RL.lastIndex;
+  }
+  if(i<t.length)out.push(t.slice(i));
+  return out;
+}
+function linkedRecipes(r){
+  const seen=new Map();
+  for(const st of r.steps||[]){RL.lastIndex=0;let m;while((m=RL.exec(st)))if(m[2]!==r.id&&!seen.has(m[2]))seen.set(m[2],m[1])}
+  return seen;
+}
+// "Uses: Pizza dough, Pesto" next to the Source button
+function subSources(r){
+  const m=linkedRecipes(r);if(!m.size)return null;
+  return el("span",{class:"subsrc"},"Uses ",...[...m].flatMap(([id,t],i)=>[i?", ":"",el("a",{class:"rlink",href:"#"+id,onclick:goRecipe(id,t)},t)]));
+}
+function recipePicker(skip){
+  return new Promise(res=>{
+    const list=el("div",{class:"plist"}),inp=el("input",{type:"search",placeholder:"Search your recipes",autocomplete:"off","aria-label":"Search recipes"});
+    const done=v=>{d.remove();removeEventListener("keydown",k);res(v)},k=e=>{if(e.key==="Escape")done(null)};
+    const d=el("div",{id:"dlg",onclick:e=>{if(e.target===d)done(null)}},el("div",{class:"box pbox",role:"dialog","aria-label":"Link a recipe"},
+      el("h3",{},"Link a recipe"),el("div",{class:"row"},inp),list,el("div",{class:"actions"},el("button",{class:"btn",type:"button",onclick:()=>done(null)},"Cancel"))));
+    const find=async()=>{
+      const x=await api("/api/recipes?sort=az&q="+encodeURIComponent(inp.value));
+      const rs=x.recipes.filter(r=>r.id!==skip).slice(0,60);
+      list.replaceChildren(...(rs.length?rs.map(r=>el("button",{class:"pitem",type:"button",onclick:()=>done(r)},r.title||"Untitled")):[el("p",{class:"mute"},"No matches")]));
+    };
+    let tm2;inp.oninput=()=>{clearTimeout(tm2);tm2=setTimeout(find,200)};
+    addEventListener("keydown",k);document.body.append(d);inp.focus();find();
+  });
+}
+function recipeLinkBtn(ol,r){
+  let rng=null;
+  const keep=()=>{const s=getSelection();if(s.rangeCount&&ol.contains(s.anchorNode))rng=s.getRangeAt(0).cloneRange()};
+  for(const ev of["keyup","mouseup","focusin"])ol.addEventListener(ev,keep);
+  return el("button",{type:"button",class:"btn addrow",onclick:async()=>{
+    const rec=await recipePicker(r.id);if(!rec)return;
+    let t=(rec.title||"Untitled").replace(/[\[\]|]/g," ").trim();
+    if(linkMap.has(t)&&linkMap.get(t)!==rec.id)t+=" ("+rec.id.slice(-6)+")";
+    linkMap.set(t,rec.id);const tok="[["+t+"]]";
+    const r0=rng,n0=r0&&r0.startContainer.isConnected?(r0.startContainer.nodeType===1?r0.startContainer:r0.startContainer.parentElement):null,cur=n0&&n0.closest(".ce");
+    if(cur){cur.focus();const s=getSelection();s.removeAllRanges();s.addRange(r0);document.execCommand("insertText",false,tok+(r0.startOffset<(r0.startContainer.textContent||"").length?" ":""))}
+    else{const n=stepRow(tok);ol.append(n);n.querySelector(".ce").focus()}
+  }},"+ Recipe link");
+}
+// pick the cover from stills cut across the video (plus the site's own thumbnail)
+function framePicker(){
+  const box=el("div",{class:"box fbox",role:"dialog","aria-label":"Choose a cover"});
+  const d=el("div",{id:"dlg",onclick:e=>{if(e.target===d)done()}},box);
+  const done=()=>{d.remove();removeEventListener("keydown",k)},k=e=>{if(e.key==="Escape")done()};
+  const paint=()=>{
+    const r=current,cands=[...(r.has_thumb?["thumbnail.jpg"]:[]),...(r.thumbs||[])];
+    box.replaceChildren(el("h3",{},"Choose a cover"),
+      cands.length?el("div",{class:"frames"},cands.map(p=>el("button",{class:"fr"+(p===r.cover?" on":""),type:"button","aria-pressed":p===r.cover?"true":"false","aria-label":p==="thumbnail.jpg"?"Original thumbnail":"Video frame",
+        onclick:async()=>{await setCoverTo(p);done()}},el("img",{src:`/files/${r.id}/${p}`,alt:""}),p==="thumbnail.jpg"?el("span",{},"Original"):null)))
+        :el("p",{class:"mute"},"No frames yet."),
+      el("div",{class:"actions"},
+        r.has_video?el("button",{class:"btn",type:"button",onclick:async e=>{
+          const b=e.currentTarget;b.disabled=true;b.textContent="Cutting frames…";
+          try{current=await api(`/api/recipes/${r.id}/thumbs`,{method:"POST"})}catch(err){toast({kind:"err",title:"Couldn't cut frames",text:err.message})}
+          paint()}},(r.thumbs||[]).length?"Cut new frames":"Cut frames from the video"):null,
+        el("button",{class:"btn",type:"button",onclick:done},"Close")));
+  };
+  addEventListener("keydown",k);document.body.append(d);paint();
+}
 function heroBox(r,editing){
   heroEditing=editing;picIdx=0;
   const menu=el("div",{class:"hmenu",hidden:true},
     editing?el("button",{onclick:()=>$("#coverFile").click()},"Set cover from device"):null,
     editing?el("button",{onclick:()=>$("#coverCam").click()},"Take a cover photo"):null,
     editing?null:el("button",{onclick:()=>$("#file").click()},"Add photo to gallery"),
+    r.has_video||(r.thumbs||[]).length?el("button",{onclick:framePicker},"Choose from video frames"):null,
     r.has_thumb&&r.cover!=="thumbnail.jpg"?el("button",{onclick:async()=>{
       current=await api("/api/recipes/"+r.id,{method:"PATCH",body:JSON.stringify({cover:"thumbnail.jpg"})});if(editing)swapHero();else draw(false)}},"Use the original picture"):null);
   const w=el("div",{class:"herow"},
@@ -891,7 +988,7 @@ async function keepAwake(){
 }
 function cook(r,mult,metric){
   const steps=[],heads=[];let curHd="";
-  for(const s of (r.steps||[])){if(isHd(s)){curHd=hdText(s);continue}steps.push(tempText(s,metric));heads.push(curHd)}
+  for(const s of (r.steps||[])){if(isHd(s)){curHd=hdText(s);continue}steps.push(plainLinks(tempText(s,metric)));heads.push(curHd)}
   if(!steps.length||cookEl)return;
   let i=0,fs=+store.get("ckfs")||28;
   const num=el("div",{class:"n"}),tx=el("div",{class:"tx"}),prog=el("i"),ttl=el("div",{class:"ttl"},r.title||""),aw=el("div",{class:"ck-aw"},"");
@@ -899,7 +996,7 @@ function cook(r,mult,metric){
   const ing=el("div",{class:"ck-ing"},el("h2",{style:"margin-top:0"},"Ingredients"),...(r.ingredients||[]).map(x=>{
     const sp=ingSplit(x,mult,metric),row=el("div",{class:"ck-i",onclick:()=>{have.has(x)?have.delete(x):have.add(x);row.classList.toggle("have",have.has(x))}},...sp[0]," ",...sp[1]);
     return row}));
-  const prev=el("button",{class:"btn",onclick:()=>go(-1)},"← Back"),next=el("button",{class:"btn pri",onclick:()=>go(1)},"Next →");
+  const prev=el("button",{class:"btn",onclick:()=>go(-1)},"Back"),next=el("button",{class:"btn pri",onclick:()=>go(1)},"Next →");
   const step=el("div",{class:"ck-step"},num,tx);
   const ingBtn=el("button",{class:"btn",id:"ckIngBtn",onclick:()=>ing.classList.toggle("show")},"Ingredients");
   const setFs=d=>{fs=Math.max(18,Math.min(56,fs+d));store.set("ckfs",fs);root.style.setProperty("--ckf",fs+"px")};
@@ -991,15 +1088,15 @@ function ingRow(line){
 }
 const isHd=t=>/^##\s/.test(t),hdText=t=>t.replace(/^##\s*/,"");
 function stepRow(txt){
-  const hd=isHd(txt),e=ce(hd?hdText(txt):txt,hd?"Heading, e.g. For the sauce":"step");
+  const hd=isHd(txt),e=ce(hd?hdText(txt):showLinks(txt),hd?"Heading, e.g. For the sauce":"step");
   const li=el("li",{class:hd?"hd":""},e,el("button",{type:"button",class:"rm srm","aria-label":"Remove step",onclick:()=>li.remove()},"×"));
   listKeys(e,li,stepRow,n=>n.querySelector(".ce").focus(),()=>!e.textContent);
-  li.getVal=()=>{const v=ceVal(e);return v&&hd?"## "+v:v};
+  li.getVal=()=>{const v=hideLinks(ceVal(e));return v&&hd?"## "+v:v};
   return li;
 }
 function draw(editing){
   const r=current,f=n=>`/files/${r.id}/${n}`,d=$("#detail");
-  $("#sheet").dataset.editing=editing?"1":"";
+  $("#sheet").dataset.editing=editing?"1":"";linkMap.clear();
   const sel=el("select",{onchange:async e=>{current=await api("/api/recipes/"+r.id,{method:"PATCH",body:JSON.stringify({meal:e.target.value})})}},
     MEALS.map(m=>el("option",{value:m,selected:m===r.meal},m)));
   const sheet=d,toggle=()=>{if(editing&&r.draft){discardDraft();return}const y=sheet.scrollTop;draw(!editing);sheet.scrollTop=y};
@@ -1012,7 +1109,7 @@ function draw(editing){
   let mult=1,metric=store.get("metric")==="1",numbered=true,flagsOn=false;
   const FL=computeFlags(r);
   const E=editing?{h1:ce(r.title||"","Title","h1"),sv:ce(r.servings||"","as stated"),sn:nstep(r.servings_num,"#",1,100),
-    sn2:ce(r.source_note||"","Source (book, page…)"),pi:nstep(r.prep_min,"–",5,2880),ci:nstep(r.cook_min,"–",5,2880),ti:nstep(r.total_min,"–",5,2880)}:null;
+    sn2:ce(r.source_note||"","Source note (book, page…)"),su:el("input",{class:"srcinp",type:"url",value:r.source_url||"",placeholder:"https://… link to the original","aria-label":"Source link"}),pi:nstep(r.prep_min,"–",5,2880),ci:nstep(r.cook_min,"–",5,2880),ti:nstep(r.total_min,"–",5,2880)}:null;
   const heartTxt=()=>r.favorite?"Favorited":"Favorite";
   const heart=el("button",{class:"btn heartbtn"+(r.favorite?" on":""),onclick:async()=>{
     const res=await api("/api/recipes/"+r.id,{method:"PATCH",body:JSON.stringify({favorite:!r.favorite})});
@@ -1036,7 +1133,7 @@ function draw(editing){
     ol.className="st "+(numbered?"num":"plain");
     ol.replaceChildren(...(r.steps||[]).map((st,ix)=>{const fl=flagsOn?FL.steps.get(ix):null;
       if(isHd(st))return el("li",{class:"hd"},hdText(st));
-      return el("li",{class:fl?"needck":""},tempText(st,metric),fl?el("div",{class:"flagnote"},"\u26a0 "+fl):null)}));
+      return el("li",{class:fl?"needck":""},...linkNodes(tempText(st,metric)),fl?el("div",{class:"flagnote"},"\u26a0 "+fl):null)}));
     servEl.replaceChildren(...(r.servings?["Serves ",...scaleText(r.servings,mult)]
       :r.servings_num?["Serves "+fmt(r.servings_num*mult)+(r.servings_inferred?" (estimated)":"")]:[]));
   };
@@ -1054,7 +1151,9 @@ function draw(editing){
   paint();
   kids.push(editing?E.h1:el("h1",{},r.title||"Untitled"));
   kids.push(el("div",{class:"meta"},sel,servEl,heart,
-    editing&&!r.source_url?E.sn2:(r.source_url?el("a",{class:"btn srcbtn",href:r.source_url,target:"_blank",rel:"noopener noreferrer"},"Source",ico(ICO.ext,14)):(r.source_note?el("span",{class:"mute small"},r.source_note):null))));
+    editing?null:(r.source_url?el("a",{class:"btn srcbtn",href:r.source_url,target:"_blank",rel:"noopener noreferrer"},"Source",ico(ICO.ext,14)):(r.source_note?el("span",{class:"mute small"},r.source_note):null)),
+    editing?null:subSources(r)));
+  if(editing)kids.push(el("div",{class:"srcrow"},el("div",{class:"lbl"},"Source"),E.su,E.sn2));
   if(editing)kids.push(el("div",{class:"times"},"Prep ",E.pi," · Cook ",E.ci," · Total ",E.ti," min"));
   else{const tl=timesLine(r);if(tl)kids.push(tl)}
   kids.push(tagEditor(r));
@@ -1100,12 +1199,12 @@ function draw(editing){
   if(editing)colA.append(el("button",{type:"button",class:"btn addrow",onclick:()=>{const n=ingRow("");ul.append(n);n.querySelector(".am .ce").focus()}},"+ Ingredient"));
   if(editing||r.steps?.length){
     colB.append(el("h2",{},"Directions"),ol);
-    if(editing)colB.append(el("div",{class:"addbar"},el("button",{type:"button",class:"btn addrow",onclick:()=>{const n=stepRow("");ol.append(n);n.querySelector(".ce").focus()}},"+ Step"),el("button",{type:"button",class:"btn addrow",onclick:()=>{const n=stepRow("## ");ol.append(n);n.querySelector(".ce").focus()}},"+ Heading")));
+    if(editing)colB.append(el("div",{class:"addbar"},el("button",{type:"button",class:"btn addrow",onclick:()=>{const n=stepRow("");ol.append(n);n.querySelector(".ce").focus()}},"+ Step"),el("button",{type:"button",class:"btn addrow",onclick:()=>{const n=stepRow("## ");ol.append(n);n.querySelector(".ce").focus()}},"+ Heading"),recipeLinkBtn(ol,r)));
   }
   kids.push(el("div",{class:"cols"},colA,colB));
   if(editing)save=async()=>{
     const val=root=>[...root.children].map(c=>c.getVal()).filter(Boolean);
-    const body={title:ceVal(E.h1),servings:ceVal(E.sv),source_note:E.sn2?ceVal(E.sn2):undefined,prep_min:E.pi.inp.value,cook_min:E.ci.inp.value,total_min:E.ti.inp.value,
+    const body={title:ceVal(E.h1),servings:ceVal(E.sv),source_url:E.su.value.trim(),source_note:ceVal(E.sn2),prep_min:E.pi.inp.value,cook_min:E.ci.inp.value,total_min:E.ti.inp.value,
       ingredients:val(ul),steps:val(ol),reviewed:true};
     if(r.draft)body.draft=false;
     if(E.sn.inp.value!==String(r.servings_num||"")){body.servings_num=E.sn.inp.value;body.servings=""}
