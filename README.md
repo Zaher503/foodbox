@@ -126,7 +126,7 @@ Invoke-RestMethod -Method Post -Uri http://localhost:8800/api/add `
 ## CI/CD
 
 - **CI** (`.github/workflows/ci.yml`) runs on every push and pull request: `ruff`, compile check, `pytest` smoke tests, compose validation and a Docker build.
-- **CD** (`.github/workflows/cd.yml`) runs after CI passes on `main`: builds the multi-arch image (amd64 + arm64), pushes it to `ghcr.io/zaher503/foodbox`, then a self-hosted runner on the production server (`/opt/foodbox`) pulls it and restarts the stack, with a health check.
+- **CD** (`.github/workflows/cd.yml`) runs after CI passes on `main`: builds the amd64 image, pushes it to `ghcr.io/zaher503/foodbox`, then a self-hosted runner on the production server (`/opt/foodbox`) pulls it and restarts the stack, with a health check.
 - Deploy = `git push origin main`. Pull requests never reach the server.
 
 ## Security notes
