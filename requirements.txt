@@ -8,7 +8,7 @@ faster-whisper==1.2.1
 nvidia-cublas-cu12==12.9.2.10; sys_platform != "darwin" and platform_machine != "aarch64"
 nvidia-cudnn-cu12==9.27.0.42; sys_platform != "darwin" and platform_machine != "aarch64"
 patchright==1.63.0
-yt-dlp[default]>=2026.1.1
+yt-dlp[default,curl-cffi]>=2026.1.1
 # Google Keep: private audited forks pinned to the reviewed commits (gpsoauth first so gkeepapi reuses it)
 gpsoauth @ git+https://github.com/Zaher503/gpsoauth.git@429b7f99fa268315cef7a981408a612fb424a79b
 gkeepapi @ git+https://github.com/Zaher503/gkeepapi.git@1a94b25c18a7abfdc23d1412091129cd63652877

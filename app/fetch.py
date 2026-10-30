@@ -1,5 +1,6 @@
 """Step 2: fetch a link into a recipe folder. No AI here."""
 import hashlib
+import importlib.util
 import ipaddress
 import json
 import os
@@ -19,6 +20,15 @@ from urllib.parse import urljoin, urlparse
 BASE = Path(os.environ.get("FOODBOX_DATA") or Path(__file__).resolve().parent.parent / "data")
 DATA = BASE / "recipes"
 YTDLP = [sys.executable, "-m", "yt_dlp"]
+
+
+def ytdlp_for(url: str) -> list:
+    """TikTok serves a verification page to a plain Python client, so ask yt-dlp to present itself as Chrome
+    (needs curl_cffi; without it the call is made as before)."""
+    if "tiktok.com" in (urlparse(url).hostname or "") and importlib.util.find_spec("curl_cffi"):
+        return [*YTDLP, "--impersonate", "chrome"]
+    return YTDLP
+
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
 VIDEO_HOSTS = ("tiktok.com", "youtube.com", "youtu.be", "vm.tiktok.com")
 
@@ -81,11 +91,11 @@ def make_thumbs(d: Path, n: int = 8) -> list:
 
 def fetch_video(url: str) -> Path:
     info = json.loads(subprocess.run(
-        [*YTDLP, "--no-warnings", "--skip-download", "--dump-single-json", url],
+        [*ytdlp_for(url), "--no-warnings", "--skip-download", "--dump-single-json", url],
         check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout)
     d = make_dir(url, info.get("title") or info.get("id"))
     subprocess.run(
-        [*YTDLP, "--no-warnings", "-f", "bv*[height<=1080]+ba/b[height<=1080]/b",
+        [*ytdlp_for(url), "--no-warnings", "-f", "bv*[height<=1080]+ba/b[height<=1080]/b",
          "--merge-output-format", "mp4", "-o", str(d / "source.%(ext)s"),
          "--write-thumbnail", "--convert-thumbnails", "jpg",
          "--write-auto-subs", "--sub-langs", "en.*", "--sub-format", "vtt",

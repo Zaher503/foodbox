@@ -1109,7 +1109,7 @@ function draw(editing){
   let mult=1,metric=store.get("metric")==="1",numbered=true,flagsOn=false;
   const FL=computeFlags(r);
   const E=editing?{h1:ce(r.title||"","Title","h1"),sv:ce(r.servings||"","as stated"),sn:nstep(r.servings_num,"#",1,100),
-    sn2:ce(r.source_note||"","Source note (book, page…)"),su:el("input",{class:"srcinp",type:"url",value:r.source_url||"",placeholder:"https://… link to the original","aria-label":"Source link"}),pi:nstep(r.prep_min,"–",5,2880),ci:nstep(r.cook_min,"–",5,2880),ti:nstep(r.total_min,"–",5,2880)}:null;
+    su:el("input",{class:"srcinp",type:"text",value:r.source_url||r.source_note||"",placeholder:"A link, or a book, page, person…","aria-label":"Source",autocomplete:"off",spellcheck:"false"}),pi:nstep(r.prep_min,"–",5,2880),ci:nstep(r.cook_min,"–",5,2880),ti:nstep(r.total_min,"–",5,2880)}:null;
   const heartTxt=()=>r.favorite?"Favorited":"Favorite";
   const heart=el("button",{class:"btn heartbtn"+(r.favorite?" on":""),onclick:async()=>{
     const res=await api("/api/recipes/"+r.id,{method:"PATCH",body:JSON.stringify({favorite:!r.favorite})});
@@ -1153,7 +1153,7 @@ function draw(editing){
   kids.push(el("div",{class:"meta"},sel,servEl,heart,
     editing?null:(r.source_url?el("a",{class:"btn srcbtn",href:r.source_url,target:"_blank",rel:"noopener noreferrer"},"Source",ico(ICO.ext,14)):(r.source_note?el("span",{class:"mute small"},r.source_note):null)),
     editing?null:subSources(r)));
-  if(editing)kids.push(el("div",{class:"srcrow"},el("div",{class:"lbl"},"Source"),E.su,E.sn2));
+  if(editing)kids.push(el("div",{class:"srcrow"},el("div",{class:"lbl"},"Source"),E.su));
   if(editing)kids.push(el("div",{class:"times"},"Prep ",E.pi," · Cook ",E.ci," · Total ",E.ti," min"));
   else{const tl=timesLine(r);if(tl)kids.push(tl)}
   kids.push(tagEditor(r));
@@ -1204,8 +1204,14 @@ function draw(editing){
   kids.push(el("div",{class:"cols"},colA,colB));
   if(editing)save=async()=>{
     const val=root=>[...root.children].map(c=>c.getVal()).filter(Boolean);
-    const body={title:ceVal(E.h1),servings:ceVal(E.sv),source_url:E.su.value.trim(),source_note:ceVal(E.sn2),prep_min:E.pi.inp.value,cook_min:E.ci.inp.value,total_min:E.ti.inp.value,
+    const body={title:ceVal(E.h1),servings:ceVal(E.sv),prep_min:E.pi.inp.value,cook_min:E.ci.inp.value,total_min:E.ti.inp.value,
       ingredients:val(ul),steps:val(ol),reviewed:true};
+    // a web link becomes the Source button; anything else (a book, a page, a person) is kept as plain text
+    const src=E.su.value.trim();
+    if(src!==(r.source_url||r.source_note||"")){
+      if(/^https?:\/\/\S+$/i.test(src))body.source_url=src;
+      else{body.source_url="";body.source_note=src}
+    }
     if(r.draft)body.draft=false;
     if(E.sn.inp.value!==String(r.servings_num||"")){body.servings_num=E.sn.inp.value;body.servings=""}
     try{current=await api("/api/recipes/"+r.id,{method:"PATCH",body:JSON.stringify(body)})}
