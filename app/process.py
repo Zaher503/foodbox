@@ -265,6 +265,55 @@ def norm_steps(steps):
     return out
 
 
+def norm_ingredients(items):
+    """Ingredient group titles ("## For the chicken") stay only when two or more groups have items under them."""
+    out = []
+    for s in items or []:
+        s = str(s).strip()
+        m = re.match(r"^#{1,6}\s*(.+?)\s*:?$", s)
+        if m:
+            s = "## " + m.group(1)
+        if s.startswith("## ") and out and out[-1].startswith("## "):
+            out.pop()
+        out.append(s)
+    while out and out[-1].startswith("## "):
+        out.pop()
+    if sum(1 for s in out if s.startswith("## ")) == 1:
+        out = [s for s in out if not s.startswith("## ")]  # one title alone splits nothing
+    return out
+
+
+def html_ingredient_groups(html: str):
+    """[(title, n_items), ...] from recipe-card plugins that group ingredients; schema.org data is flat."""
+    try:
+        import lxml.html
+        doc = lxml.html.fromstring(html)
+    except Exception:
+        return []
+    cls = lambda n: f"contains(concat(' ', normalize-space(@class), ' '), ' {n} ')"
+    groups = []
+    for g in doc.xpath(f"//*[{cls('wprm-recipe-ingredient-group')}]"):
+        names = g.xpath(f".//*[{cls('wprm-recipe-group-name')}]")
+        name = names[0].text_content() if names else ""
+        items = g.xpath(f".//li[{cls('wprm-recipe-ingredient')}]")
+        if items:
+            groups.append((re.sub(r"\s+", " ", unescape(name)).strip().rstrip(":"), len(items)))
+    return groups
+
+
+def apply_groups(ingredients, groups):
+    """Put the page's group titles into the flat schema.org list when the counts line up."""
+    if len(groups) < 2 or sum(n for _, n in groups) != len(ingredients):
+        return ingredients
+    out, i = [], 0
+    for title, n in groups:
+        if title:
+            out.append("## " + title)
+        out += ingredients[i:i + n]
+        i += n
+    return out
+
+
 def unescape(text):
     """&#39; -> ' (twice, for pages that escape the markup they already escaped)."""
     text = str(text)
@@ -342,8 +391,13 @@ def from_jsonld(d: Path):
             steps.append(s.get("text", ""))
     y = ld.get("recipeYield")
     y = y[0] if isinstance(y, list) and y else y
+    ingredients = clean_list(ld.get("recipeIngredient"))
+    try:
+        ingredients = apply_groups(ingredients, html_ingredient_groups((d / "page.html").read_text(encoding="utf-8")))
+    except Exception:
+        pass  # grouping is a bonus; the flat list is still right
     return {"title": unescape(ld.get("name") or ""), "servings": str(y) if y else None,
-            "ingredients": clean_list(ld.get("recipeIngredient")),
+            "ingredients": ingredients,
             "steps": clean_list(re.sub(r"<[^>]+>", "", s) for s in steps),
             "nutrition": nutrition_from_ld(ld),
             "prep_min": iso_minutes(ld.get("prepTime")), "cook_min": iso_minutes(ld.get("cookTime")),
@@ -365,7 +419,7 @@ Rules:
 - Skip the author's story, introduction, tips, notes, nutrition facts, reviews, ads and links to other recipes. Just the recipe.
 - NEVER guess. Copy quantities, times and temperatures exactly as written. Do not add ingredients or steps.
 - If the page has no recipe, return empty "ingredients" and "steps" lists.
-- Ingredients: "quantity unit item, preparation", one per entry, in the order listed. Keep the preparation exactly as written ("diced", "cut into 1 inch pieces", "boneless skinless"). Drop other optional commentary in parentheses.
+- Ingredients: "quantity unit item, preparation", one per entry, in the order listed. If the ingredients are split into parts with their own titles ("For the chicken", "Cheese sauce"), put a title entry written "## For the chicken" before that part's ingredients. No titles when there is only one part.  Keep the preparation exactly as written ("diced", "cut into 1 inch pieces", "boneless skinless"). Drop other optional commentary in parentheses.
 - Steps: the method in order, one action per entry, short imperative sentences. Keep times and temperatures.
 - If the method is split into parts with their own titles ("For the sauce:"), keep each title as its own entry written "## For the sauce" before that part's steps. Never put a title in a step. No headings when the method is one part.
 - Title: the recipe's own name exactly as the page titles it (remove site names and the word 'recipe'). Never rename or reinterpret the dish.
@@ -384,7 +438,7 @@ Rules:
 - Skip any intro, backstory, tips, ads or unrelated text that came along with the paste. Just the recipe.
 - NEVER guess. Copy quantities, times and temperatures exactly as written. Do not add ingredients or steps that are not stated.
 - If the text has no recognizable recipe, return empty "ingredients" and "steps" lists.
-- Ingredients: "quantity unit item, preparation", one per entry, in the order listed. Keep the preparation exactly as written ("diced", "cut into 1 inch pieces", "boneless skinless"). If a line has no quantity, write the item alone.
+- Ingredients: "quantity unit item, preparation", one per entry, in the order listed. If the ingredients are split into parts with their own titles ("For the chicken", "Cheese sauce"), put a title entry written "## For the chicken" before that part's ingredients. No titles when there is only one part.  Keep the preparation exactly as written ("diced", "cut into 1 inch pieces", "boneless skinless"). If a line has no quantity, write the item alone.
 - Steps: the method in order, one action per entry, short imperative sentences. Keep times and temperatures. If the ingredients and steps are mixed together or out of order, sort them out; do not reword beyond that.
 - If the method is split into parts with their own titles ("For the sauce:"), keep each title as its own entry written "## For the sauce" before that part's steps. Never put a title in a step. No headings when the method is one part.
 - Title: the recipe's own name if it is stated in the text; otherwise a short, plain title describing the dish.
@@ -465,7 +519,7 @@ def extract_notes(html: str):
 def finish(r, corpus, title_fallback="", evidence_min=60):
     """Shared checks: no invented numbers, flag thin or amount-free recipes."""
     r["title"] = re.sub(r"\s+", " ", unescape(r.get("title") or "")).strip() or title_fallback or "Untitled"
-    r["ingredients"] = clean_list(r.get("ingredients"))
+    r["ingredients"] = norm_ingredients(clean_list(r.get("ingredients")))
     r["steps"] = norm_steps(clean_list(r.get("steps")))
     r["ingredients"], r["steps"], dropped, changes = ground(r["ingredients"], r["steps"], corpus)
     if r.get("servings") and not (_nums(str(r["servings"])) & _nums(corpus)):

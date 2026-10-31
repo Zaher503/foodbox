@@ -38,7 +38,7 @@ def fill_caption_amounts(r, caption):
         return r
     out = []
     for line in r.get("ingredients") or []:
-        if re.search(r"\d", line) or QTY_START.match(line):
+        if line.startswith("## ") or re.search(r"\d", line) or QTY_START.match(line):
             out.append(line)
             continue
         found = {amts.get(x.strip().lower()) for x in SPLIT_AND.split(line)}
