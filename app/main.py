@@ -1,4 +1,5 @@
 """Recipe Box backend: job queue + JSON API + static UI. Run: uvicorn main:app --port 8800"""
+import hashlib
 import json
 import os
 import re
@@ -59,6 +60,11 @@ try:
     db.execute("ALTER TABLE jobs ADD COLUMN user TEXT")  # who sent the link (older databases lack it)
 except sqlite3.OperationalError:
     pass
+for col in ("pasted_text TEXT", "text_hash TEXT"):  # a recipe pasted in directly, no link
+    try:
+        db.execute(f"ALTER TABLE jobs ADD COLUMN {col}")
+    except sqlite3.OperationalError:
+        pass
 db.execute("UPDATE jobs SET status='queued' WHERE status='running'")  # resume after restart
 db.commit()
 dblock = threading.Lock()
@@ -133,10 +139,24 @@ def find_by_url(url):
             return r["id"]
 
 
+def find_by_hash(h):
+    for r in all_recipes():
+        if r.get("paste_hash") == h:
+            return r["id"]
+
+
+def text_hash(text):
+    return hashlib.sha1(re.sub(r"\s+", " ", (text or "").strip().lower()).encode()).hexdigest()
+
+
 def write_stub(d: Path, url: str, err: str):
     fx = json.loads((d / "fetch.json").read_text(encoding="utf-8")) if (d / "fetch.json").exists() else {}
-    save(d, {"title": fx.get("yt_title") or url, "meal": "Other", "servings": None,
-             "ingredients": [], "steps": [], "source_url": url, "kind": fx.get("kind", "video"),
+    is_text = fx.get("kind") == "text"
+    save(d, {"title": fx.get("yt_title") or fx.get("page_title") or url or "Untitled", "meal": "Other",
+             "servings": None, "ingredients": [], "steps": [], "source_url": fx.get("source_url", url),
+             "kind": fx.get("kind", "video"),
+             "source_note": "Pasted recipe" if is_text else None,
+             "paste_hash": text_hash(fx["pasted_text"]) if is_text else None,
              "cover": "thumbnail.jpg" if (d / "thumbnail.jpg").exists() else None,
              "has_video": (d / "source.mp4").exists(),
              "needs_review": f"failed: {err[:300]}", "processed_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
@@ -173,7 +193,7 @@ def run_job(job):
             d = RECIPES / job["recipe_id"]
         else:
             unload_model()
-            d = fetch.fetch(url)
+            d = fetch.fetch_text(job["pasted_text"]) if job.get("pasted_text") else fetch.fetch(url)
         live["dir"] = d.name
         (d / ".stage").unlink(missing_ok=True)
         live["stage"] = "starting"
@@ -213,7 +233,8 @@ def run_job(job):
         rid = None
         try:
             if d is None:
-                d = fetch.make_dir(url, re.sub(r"\W+", "-", fetch.urlparse(url).netloc))
+                d = fetch.make_dir(job["pasted_text"][:50], "pasted-recipe") if job.get("pasted_text") \
+                    else fetch.make_dir(url, re.sub(r"\W+", "-", fetch.urlparse(url).netloc))
             if not (d / "recipe.json").exists():
                 write_stub(d, url, msg)
             rid = d.name
@@ -273,6 +294,27 @@ def enqueue(raw: str, meal=None, recipe_id=None, user=None):
     return {"status": "queued", "job": cur.lastrowid}
 
 
+def enqueue_text(raw: str, meal=None, user=None):
+    """A full recipe pasted in directly (ingredients + instructions), no link: the local model structures it."""
+    meal = next((x for x in MEALS if isinstance(meal, str) and x.lower() == meal.strip().lower()), None)
+    user = user.strip()[:40] if isinstance(user, str) and user.strip() else None
+    text = (raw or "").strip()
+    if len(text) < 40:
+        raise HTTPException(400, "paste the full recipe (ingredients and instructions)")
+    if len(text) > 20000:
+        raise HTTPException(400, "that's too long to paste directly; try the link or Write one instead")
+    h = text_hash(text)
+    rid = find_by_hash(h)
+    if rid:
+        return {"status": "exists", "recipe_id": rid}
+    j = q("SELECT id FROM jobs WHERE text_hash=? AND status IN ('queued','running')", h).fetchone()
+    if j:
+        return {"status": "queued", "job": j["id"]}
+    cur = q("INSERT INTO jobs(url,meal,recipe_id,user,status,created,updated,pasted_text,text_hash) "
+            "VALUES(?,?,?,?,?,?,?,?,?)", "", meal, None, user, "queued", time.time(), time.time(), text, h)
+    return {"status": "queued", "job": cur.lastrowid}
+
+
 def throttle():
     now = time.time()
     hits[:] = [t for t in hits if now - t < 60]
@@ -293,6 +335,12 @@ def api_add(body: dict = Body(...), x_recipe_key: str = Header(default="")):
 def ui_add(body: dict = Body(...)):
     throttle()
     return enqueue(body.get("url", ""), body.get("meal"))
+
+
+@app.post("/api/ui/paste")  # a full recipe pasted in (ingredients + instructions), no link
+def ui_paste(body: dict = Body(...)):
+    throttle()
+    return enqueue_text(body.get("text", ""), body.get("meal"))
 
 
 @app.post("/api/ui/add-many")  # bulk: one link per line, one throttle hit for the whole paste
@@ -556,6 +604,11 @@ def delete(rid: str):
 def reprocess(rid: str):
     d = rdir(rid)
     r = load(d)
+    if r.get("kind") == "text":
+        # pasted recipe: fetch.json already holds the text, just re-run the model on it
+        cur = q("INSERT INTO jobs(url,meal,recipe_id,user,status,created,updated) VALUES(?,?,?,?,?,?,?)",
+                "", None, d.name, None, "queued", time.time(), time.time())
+        return {"status": "queued", "job": cur.lastrowid}
     if not (d / "fetch.json").exists():
         # failed link stub: nothing was downloaded, so move it aside and fetch the link again from scratch
         dest = TRASH / f"{d.name}_{int(time.time())}"

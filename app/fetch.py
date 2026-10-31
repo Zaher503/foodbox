@@ -232,6 +232,19 @@ def fetch_page(url: str) -> Path:
     return d
 
 
+def fetch_text(text: str) -> Path:
+    """A recipe pasted in directly, no link. No download here; the model structures it in process.py."""
+    text = text.strip()
+    title = next((l.strip() for l in text.splitlines() if l.strip()), "pasted recipe")
+    h = hashlib.sha1(re.sub(r"\s+", " ", text.lower()).encode()).hexdigest()[:6]
+    d = DATA / f"{datetime.now():%Y-%m-%d}_{slugify(title)}_{h}"
+    (d / "shots").mkdir(parents=True, exist_ok=True)
+    meta = {"kind": "text", "source_url": "", "pasted_text": text, "page_title": title[:200],
+            "fetched_at": datetime.now(timezone.utc).isoformat()}
+    (d / "fetch.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    return d
+
+
 def fetch(url: str) -> Path:
     url = check_url(url)
     return fetch_video(url) if is_video(url) else fetch_page(url)

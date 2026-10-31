@@ -100,6 +100,9 @@ h1{font-size:24px;line-height:1.2;margin:16px 0 8px}
 h2{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:24px 0 8px}
 table.ing{width:100%;border-collapse:collapse}
 table.ing td{padding:7px 0;border-bottom:1px solid var(--line);vertical-align:top}
+table.ing tr.hd td{padding:14px 0 4px;font-weight:700;font-size:15px;color:var(--acc);border-bottom:1px solid var(--line)}
+table.ing tr.hd td.cb{width:auto;padding-right:0}
+table.ing tr.hd .ce{font-weight:700;color:var(--acc)}
 table.ing td.cb{width:38px;padding-right:6px}
 table.ing input[type=checkbox]{width:20px;height:20px;margin:1px 0 0;accent-color:var(--accent,#c2410c);cursor:pointer}
 table.ing td.am{width:1%;white-space:nowrap;padding-right:10px;font-weight:600}
@@ -214,6 +217,7 @@ a{color:var(--acc)}
 .ck-ing{position:absolute;inset:0;background:var(--bg);overflow-y:auto;padding:14px 18px;display:none;z-index:2}
 .ck-ing.show{display:block}
 .ck-i{padding:10px 0;border-bottom:1px solid var(--line);font-size:18px;cursor:pointer}
+.ck-hd{padding:14px 0 4px;font-weight:700;font-size:16px;color:var(--acc);border-bottom:1px solid var(--line)}
 .ck-i.have{text-decoration:line-through;opacity:.45}
 .ck-nav{display:flex;gap:10px;padding:12px 14px}
 .ck-nav .btn{flex:1;padding:18px;font-size:20px;border-radius:14px}
@@ -482,6 +486,12 @@ html #dlg h3{margin:0 0 12px;font:600 18px var(--display)}
     <textarea id="addUrl" rows="1" placeholder="Paste a link, or several (one per line)" spellcheck="false"></textarea>
     <button class="btn pri" id="addGo">Save</button>
     <button class="btn" id="addManual" title="Type a recipe in yourself">Write one</button>
+    <button class="btn" id="addPaste" title="Paste the full recipe text and let the AI sort it out">Paste text</button>
+  </div>
+  <div class="row" id="pasteRow" style="display:none;margin-top:8px;align-items:flex-end">
+    <textarea id="pasteBox" rows="6" style="resize:vertical;max-height:420px" placeholder="Paste the full recipe here — ingredients and instructions, in any order" spellcheck="false"></textarea>
+    <button class="btn pri" id="pasteGo">Save</button>
+    <button class="btn" id="pasteCancel">Cancel</button>
   </div>
 </header>
 <main>
@@ -555,7 +565,7 @@ function computeFlags(r){
     FL.exact=true;
     for(const x of u)(x.kind==="step"?FL.steps:FL.ing).set(x.index,"The AI wrote \u201c"+String(x.was).slice(0,140)+"\u201d but that number isn\u2019t in the source");
   }else{
-    (r.ingredients||[]).forEach((t,i)=>{if(!/[\d\u00bc-\u00be\u2150-\u215e]/.test(t))FL.ing.set(i,"No amount")});
+    (r.ingredients||[]).forEach((t,i)=>{if(!isHd(t)&&!/[\d\u00bc-\u00be\u2150-\u215e]/.test(t))FL.ing.set(i,"No amount")});
     (r.steps||[]).forEach((t,i)=>{if(!/\d/.test(t)&&(/\b(minutes?|hours?|seconds?|degrees|cups?|tbsp|tsp|tablespoons?|teaspoons?)\b/i.test(t)||/\u00b0/.test(t)))FL.steps.set(i,"Missing a number?")});
   }
   return FL;
@@ -994,6 +1004,7 @@ function cook(r,mult,metric){
   const num=el("div",{class:"n"}),tx=el("div",{class:"tx"}),prog=el("i"),ttl=el("div",{class:"ttl"},r.title||""),aw=el("div",{class:"ck-aw"},"");
   const have=new Set();
   const ing=el("div",{class:"ck-ing"},el("h2",{style:"margin-top:0"},"Ingredients"),...(r.ingredients||[]).map(x=>{
+    if(isHd(x))return el("div",{class:"ck-hd"},hdText(x));
     const sp=ingSplit(x,mult,metric),row=el("div",{class:"ck-i",onclick:()=>{have.has(x)?have.delete(x):have.add(x);row.classList.toggle("have",have.has(x))}},...sp[0]," ",...sp[1]);
     return row}));
   const prev=el("button",{class:"btn",onclick:()=>go(-1)},"Back"),next=el("button",{class:"btn pri",onclick:()=>go(1)},"Next →");
@@ -1078,7 +1089,15 @@ function listKeys(e,row,mk,focus,empty){
     else if(ev.key==="Backspace"&&empty()&&row.parentNode.children.length>1){ev.preventDefault();const p=row.previousElementSibling||row.nextElementSibling;row.remove();focus(p)}
   };
 }
+const isHd=t=>/^##\s/.test(t),hdText=t=>t.replace(/^##\s*/,"");
 function ingRow(line){
+  if(isHd(line)){
+    const e=ce(hdText(line),"Heading, e.g. For the sauce");
+    const tr=el("tr",{class:"hd"},el("td",{class:"cb"},el("button",{type:"button",class:"rm","aria-label":"Remove",onclick:()=>tr.remove()},"×")),el("td",{colspan:"2"},e));
+    listKeys(e,tr,ingRow,n=>n.querySelector(".ce").focus(),()=>!e.textContent);
+    tr.getVal=()=>{const v=ceVal(e);return v?"## "+v:""};
+    return tr;
+  }
   const sp=ingSplit(line,1,false).map(n=>n.map(x=>typeof x==="string"?x:x.textContent).join(""));
   const am=ce(sp[0],"amount"),tx=ce(sp[1],"ingredient");
   const tr=el("tr",{},el("td",{class:"cb"},el("button",{type:"button",class:"rm","aria-label":"Remove",onclick:()=>tr.remove()},"×")),el("td",{class:"am"},am),el("td",{class:"tx"},tx));
@@ -1086,7 +1105,6 @@ function ingRow(line){
   tr.getVal=()=>(ceVal(am)+" "+ceVal(tx)).trim();
   return tr;
 }
-const isHd=t=>/^##\s/.test(t),hdText=t=>t.replace(/^##\s*/,"");
 function stepRow(txt){
   const hd=isHd(txt),e=ce(hd?hdText(txt):showLinks(txt),hd?"Heading, e.g. For the sauce":"step");
   const li=el("li",{class:hd?"hd":""},e,el("button",{type:"button",class:"rm srm","aria-label":"Remove step",onclick:()=>li.remove()},"×"));
@@ -1123,6 +1141,7 @@ function draw(editing){
   const paint=()=>{
     if(editing)return paintEdit();
     ul.replaceChildren(...(r.ingredients||[]).map((i,ix)=>{
+      if(isHd(i))return el("tr",{class:"hd"},el("td",{colspan:"3"},hdText(i)));
       const k="have:"+r.id;let have=[];try{have=JSON.parse(store.get(k)||"[]")}catch{}
       const sp=ingSplit(i,mult,metric),cb=el("input",{type:"checkbox","aria-label":"Have this ingredient"});cb.checked=have.includes(i);
       const fl=flagsOn?FL.ing.get(ix):null;
@@ -1186,7 +1205,7 @@ function draw(editing){
   if(editing||r.ingredients?.length)colA.append(el("h2",{},"Ingredients"),scaler,tbl);
   if(!editing&&r.ingredients?.length)colA.append(el("button",{type:"button",class:"btn",style:"margin-top:12px",onclick:async e=>{
     const btn=e.currentTarget;
-    const items=[...ul.querySelectorAll("tr:not(.have)")].map(tr=>{
+    const items=[...ul.querySelectorAll("tr:not(.have):not(.hd)")].map(tr=>{
       const tx=tr.querySelector(".tx").cloneNode(true);tx.querySelectorAll(".flagnote").forEach(n=>n.remove());
       return (tr.querySelector(".am").textContent+" "+tx.textContent).replace(/\s+/g," ").trim()}).filter(Boolean);
     if(!items.length){toast({title:"Nothing to add",text:"Every ingredient is crossed off"});return}
@@ -1196,7 +1215,7 @@ function draw(editing){
       toast({title:"Added to Groceries",text:`${res.added} added`+(res.skipped?`, ${res.skipped} already on the list`:"")})}
     catch(err){toast({kind:"err",title:"Couldn't add to Keep",text:err.message})}
     btn.disabled=false}},"Add to Groceries (Keep)"));
-  if(editing)colA.append(el("button",{type:"button",class:"btn addrow",onclick:()=>{const n=ingRow("");ul.append(n);n.querySelector(".am .ce").focus()}},"+ Ingredient"));
+  if(editing)colA.append(el("div",{class:"addbar"},el("button",{type:"button",class:"btn addrow",onclick:()=>{const n=ingRow("");ul.append(n);n.querySelector(".am .ce").focus()}},"+ Ingredient"),el("button",{type:"button",class:"btn addrow",onclick:()=>{const n=ingRow("## ");ul.append(n);n.querySelector(".ce").focus()}},"+ Heading")));
   if(editing||r.steps?.length){
     colB.append(el("h2",{},"Directions"),ol);
     if(editing)colB.append(el("div",{class:"addbar"},el("button",{type:"button",class:"btn addrow",onclick:()=>{const n=stepRow("");ol.append(n);n.querySelector(".ce").focus()}},"+ Step"),el("button",{type:"button",class:"btn addrow",onclick:()=>{const n=stepRow("## ");ol.append(n);n.querySelector(".ce").focus()}},"+ Heading"),recipeLinkBtn(ol,r)));
@@ -1250,7 +1269,7 @@ $("#file").onchange=async e=>{
   if(ok===n)toast({kind:"ok",title:pl(ok)+" added",text:"Saved to the gallery"});
   else toast({kind:"err",title:ok?`${ok} of ${n} photos added`:"Upload failed",text:"Some photos could not be uploaded"});
 };
-$("#addBtn").onclick=()=>{const r=$("#addRow");r.style.display=r.style.display==="none"?"flex":"none";$("#addUrl").focus()};
+$("#addBtn").onclick=()=>{$("#pasteRow").style.display="none";const r=$("#addRow");r.style.display=r.style.display==="none"?"flex":"none";$("#addUrl").focus()};
 const addBox=$("#addUrl"),NL=String.fromCharCode(10);
 addBox.oninput=()=>{addBox.style.height="auto";addBox.style.height=Math.min(addBox.scrollHeight,180)+"px"};
 addBox.onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey&&!addBox.value.trim().includes(NL)){e.preventDefault();$("#addGo").click()}};
@@ -1280,6 +1299,21 @@ $("#addManual").onclick=async()=>{
   try{const res=await api("/api/ui/manual",{method:"POST",body:JSON.stringify({})});
     $("#addRow").style.display="none";await open(res.id,true)}
   catch(e){toast({kind:"err",title:"Couldn\u2019t start a new recipe",text:e.message})}
+};
+const pasteBox=$("#pasteBox");
+$("#addPaste").onclick=()=>{$("#addRow").style.display="none";$("#pasteRow").style.display="flex";pasteBox.focus()};
+$("#pasteCancel").onclick=()=>{$("#pasteRow").style.display="none";pasteBox.value=""};
+$("#pasteGo").onclick=async()=>{
+  const t=pasteBox.value.trim();if(!t)return;
+  const btn=$("#pasteGo");btn.disabled=true;btn.textContent="Sending\u2026";
+  try{
+    const res=await api("/api/ui/paste",{method:"POST",body:JSON.stringify({text:t})});
+    pasteBox.value="";$("#pasteRow").style.display="none";
+    if(res.status==="exists")toast({title:"Already in your library",text:"That recipe is already saved",action:"Open",onAction:()=>open(res.recipe_id)});
+    else{seenJobs[res.job]="queued";toast({title:"Recipe received",text:"Sorting it out\u2026"});scrollTo({top:0,behavior:"smooth"});$("#left").scrollTo({top:0,behavior:"smooth"})}
+    await jobs();startPoll();
+  }catch(e){toast({kind:"err",title:"Couldn\u2019t add that recipe",text:e.message})}
+  finally{btn.disabled=false;btn.textContent="Save"}
 };
 let tm;$("#q").oninput=()=>{clearTimeout(tm);tm=setTimeout(load,250)};
 $("#sort").value=sort;$("#sort").onchange=e=>{sort=e.target.value;store.set("sort",sort);load()};
