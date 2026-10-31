@@ -73,3 +73,28 @@ def test_paste_of_an_already_saved_recipe_returns_it(client):
     assert r.status_code == 200
     body = r.json()
     assert body == {"status": "exists", "recipe_id": "test-existing-paste"}
+
+
+def test_edit_source_and_pick_cover_frame(client):
+    rid = client.post("/api/ui/manual", json={}).json()["id"]
+    url = f"/api/recipes/{rid}"
+    assert client.patch(url, json={"source_url": "ftp://x"}).status_code == 400
+    assert client.patch(url, json={"source_url": "https://example.com/a"}).json()["source_url"] == "https://example.com/a"
+    # cover candidates cut from a video live in thumbs/ and can be chosen as the cover
+    d = sys.modules["main"].RECIPES / rid
+    (d / "thumbs").mkdir()
+    (d / "thumbs" / "t_01.jpg").write_bytes(b"x")
+    assert client.get(url).json()["thumbs"] == ["thumbs/t_01.jpg"]
+    assert client.patch(url, json={"cover": "thumbs/t_01.jpg"}).json()["cover"] == "thumbs/t_01.jpg"
+    assert client.patch(url, json={"cover": "thumbs/../recipe.json"}).status_code == 400
+    assert client.post(url + "/thumbs").status_code == 400  # no saved video to cut frames from
+
+
+def test_failure_reason_is_the_tools_own_error(client):
+    import subprocess
+    main = sys.modules["main"]
+    stderr = ("WARNING: x\n"
+              "ERROR: [TikTok] 1: Unexpected response from webpage request; please report this issue on  https://example.com\n")
+    e = subprocess.CalledProcessError(1, ["python", "-m", "yt_dlp", "--long", "args"], stderr=stderr)
+    assert main.explain(e) == "ERROR: [TikTok] 1: Unexpected response from webpage request"
+    assert "returned non-zero" in main.explain(subprocess.CalledProcessError(1, ["x"]))
