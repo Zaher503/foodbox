@@ -1,5 +1,6 @@
 """Step 2: fetch a link into a recipe folder. No AI here."""
 import hashlib
+import html as htmllib
 import importlib.util
 import ipaddress
 import json
@@ -161,12 +162,45 @@ _opener = urllib.request.build_opener(_SafeRedirect)
 MAX_BYTES = 8_000_000
 
 
-def _get(url: str, limit=MAX_BYTES) -> bytes:
+def _http_error(code: int) -> str:
+    if code in (404, 410):
+        return f"page not found (HTTP {code}): the link may be dead"
+    return f"site refused the download (HTTP {code})"
+
+
+def _open(url: str, limit=MAX_BYTES):
+    """(body, final url after redirects)."""
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept-Language": "en"})
     try:
-        return _opener.open(req, timeout=30).read(limit)
+        resp = _opener.open(req, timeout=30)
+        return resp.read(limit), resp.geturl()
     except urllib.error.HTTPError as e:
-        raise RuntimeError(f"site refused the download (HTTP {e.code})") from None
+        raise RuntimeError(_http_error(e.code)) from None
+
+
+def _get(url: str, limit=MAX_BYTES) -> bytes:
+    return _open(url, limit)[0]
+
+
+SLUG_STOP = {"the", "and", "with", "for", "recipe", "recipes", "best", "easy", "how", "make"}
+
+
+def _slug_words(url: str) -> set:
+    """Words of the last path part that has any ("minted-peas-rice-with-feta" -> {minted, pea, rice, feta})."""
+    for seg in reversed([s for s in urlparse(url).path.split("/") if s]):
+        words = {w[:-1] if w.endswith("s") else w for w in re.findall(r"[a-z]{3,}", seg.lower()) if w not in SLUG_STOP}
+        if words:
+            return words
+    return set()
+
+
+def redirected_elsewhere(requested: str, final: str) -> bool:
+    """True when a redirect led to a page whose address shares too few words with the one asked for: old links
+    often redirect to an unrelated recipe or the home page, and that must not be saved as if it were the link."""
+    if not final or urlparse(requested).path.rstrip("/") == urlparse(final).path.rstrip("/"):
+        return False
+    want = _slug_words(requested)
+    return bool(want) and len(want & _slug_words(final)) / len(want) < 0.6
 
 
 def _get_browser(url: str) -> bytes:
@@ -260,11 +294,12 @@ def save_cover(d: Path, url: str, html: str, recipe):
 
 def fetch_page(url: str) -> Path:
     try:
-        html = _get(url).decode("utf-8", "replace")
+        raw, final = _open(url)
+        html = raw.decode("utf-8", "replace")
     except RuntimeError as e:
         if "HTTP 403" not in str(e):
             raise
-        html = _get_browser(url).decode("utf-8", "replace")
+        html, final = _get_browser(url).decode("utf-8", "replace"), url
     p = _LD()
     p.feed(html)
     recipe = None
@@ -275,7 +310,7 @@ def fetch_page(url: str) -> Path:
             continue
         if recipe:
             break
-    title = (recipe or {}).get("name") or _meta(html, "og:title") or urlparse(url).path
+    title = htmllib.unescape((recipe or {}).get("name") or _meta(html, "og:title") or urlparse(url).path)
     d = make_dir(url, title)
     (d / "page.html").write_text(html, encoding="utf-8")
     (d / "jsonld.json").write_text(json.dumps(recipe, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -283,6 +318,7 @@ def fetch_page(url: str) -> Path:
     (d / "fetch.json").write_text(json.dumps({
         "kind": "page", "source_url": url, "has_jsonld": _usable(recipe), "page_title": title,
         "cover_url": cover_url, "cover_error": cover_error,
+        "final_url": final if final != url else None, "redirected_elsewhere": redirected_elsewhere(url, final),
         "fetched_at": datetime.now(timezone.utc).isoformat()}, indent=2), encoding="utf-8")
     return d
 

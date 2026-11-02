@@ -121,3 +121,37 @@ def test_food_network_cook_note():
 def test_note_reference_detected():
     assert P.NOTE_REF.search("melt the butter (see Cook's Note). Add the ginger")
     assert not P.NOTE_REF.search("Stir and serve.")
+
+
+def test_redirect_to_another_recipe_detected():
+    assert fetch.redirected_elsewhere("http://www.eatingwell.com/recipe/252015/minted-peas-rice-with-feta/",
+                                      "https://www.eatingwell.com/recipe/272721/jerk-chicken-with-coconut-rice-peas/")
+    assert fetch.redirected_elsewhere("https://a.com/recipes/chicken-biryani/", "https://a.com/")
+
+
+def test_harmless_redirects_not_flagged():
+    assert not fetch.redirected_elsewhere("https://a.com/pasta-caramelized-sweet-potatoes-kale/", "https://a.com/pasta-with-caramelized-sweet-potatoes-and-kale/")
+    assert not fetch.redirected_elsewhere("https://a.com/chicken-biryani-instant-pot/", "https://a.com/instant-pot-chicken-biryani/")
+    assert not fetch.redirected_elsewhere("http://a.com/x/same-slug/", "https://www.a.com/x/same-slug")
+
+
+def test_not_found_message():
+    assert "not found" in fetch._http_error(404) and "dead" in fetch._http_error(404)
+    assert "refused" in fetch._http_error(403) and "HTTP 403" in fetch._http_error(403)
+
+
+def test_page_title_entities_unescaped(tmp_path, monkeypatch):
+    html = '<html><head><meta property="og:title" content="Jerk Chicken &amp; Peas"></head><body></body></html>'
+    monkeypatch.setattr(fetch, "DATA", tmp_path)
+    monkeypatch.setattr(fetch, "_open", lambda u, limit=0: (html.encode(), u))
+    monkeypatch.setattr(fetch, "_get", lambda u, limit=0: (_ for _ in ()).throw(RuntimeError("no")))
+    monkeypatch.setattr(fetch, "check_url", lambda u: u)
+    d = fetch.fetch_page("https://a.com/x")
+    assert "amp" not in d.name and json.loads((d / "fetch.json").read_text())["page_title"] == "Jerk Chicken & Peas"
+
+
+def test_active_time_read_from_page():
+    html = "<html><body><p>Total: 1 hr 45 min (includes resting time) Active: 35 min Yield: 4</p><style>.a:Active:hover{}</style></body></html>"
+    assert P.active_minutes(html) == 35
+    assert P.active_minutes("<html><body>Active: 1 hr 5 min</body></html>") == 65
+    assert P.active_minutes("<html><body>no times</body></html>") is None

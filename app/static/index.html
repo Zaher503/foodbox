@@ -844,6 +844,7 @@ function timesLine(r){
   const b=[],t=r.total_min||(r.prep_min&&r.cook_min?r.prep_min+r.cook_min:0);
   if(r.prep_min)b.push(["Prep",fmtMin(r.prep_min)]);
   if(r.cook_min)b.push(["Cook",fmtMin(r.cook_min)]);
+  if(r.active_min&&!r.cook_min)b.push(["Active",fmtMin(r.active_min)]);
   if(t)b.push(["Total",fmtMin(t)]);
   return b.length?el("div",{class:"times cards"},b.map(([k,v])=>el("div",{},el("span",{},k),el("b",{},v)))):null;
 }

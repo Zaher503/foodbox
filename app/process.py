@@ -379,6 +379,23 @@ def ground(ingredients, steps, corpus):
     return ing, stp, dropped, changes
 
 
+ACTIVE_TIME = re.compile(r"\bActive:\s*(?:(\d+)\s*hr)?\s*(?:(\d+)\s*min)?", re.I)
+
+
+def active_minutes(html: str):
+    """Hands-on time a page labels "Active: 35 min" (Food Network). Its schema.org cookTime is that same figure,
+    not the time in the oven, so the caller moves it out of the Cook slot."""
+    import lxml.html
+    doc = lxml.html.fromstring(html)
+    for bad in doc.xpath("//script|//style"):
+        bad.getparent().remove(bad)
+    for m in ACTIVE_TIME.finditer(re.sub(r"\s+", " ", doc.text_content())):
+        n = int(m.group(1) or 0) * 60 + int(m.group(2) or 0)
+        if 1 <= n <= 2880 and (m.group(1) or m.group(2)):
+            return n
+    return None
+
+
 EQUIPMENT = re.compile(r"\s*equipment\s*:", re.I)
 STEP_LABEL = re.compile(r"[A-Z][^.!?:]{1,60}:")
 STEP_LISTS = ("tasty-recipes-instructions", "wprm-recipe-instructions")
@@ -434,6 +451,11 @@ def from_jsonld(d: Path):
         steps, extras = label_steps(steps, html)
     except Exception:
         pass  # grouping and labels are a bonus; the flat lists are still right
+    active = None
+    try:
+        active = active_minutes(html)
+    except Exception:
+        pass
     equipment = [i for i in ingredients if EQUIPMENT.match(i)]  # a tool list some recipe cards put among the ingredients
     ingredients = [i for i in ingredients if i not in equipment]
     return {"title": unescape(ld.get("name") or ""), "servings": str(y) if y else None,
@@ -441,7 +463,7 @@ def from_jsonld(d: Path):
             "steps": steps,
             "nutrition": nutrition_from_ld(ld),
             "prep_min": iso_minutes(ld.get("prepTime")), "cook_min": iso_minutes(ld.get("cookTime")),
-            "total_min": iso_minutes(ld.get("totalTime")),
+            "total_min": iso_minutes(ld.get("totalTime")), "active_min": active,
             "category_hint": str(ld.get("recipeCategory", ""))}
 
 
@@ -683,7 +705,7 @@ def add_servings(r):
     r["servings_num"] = n
 
 
-TIME_KEYS = ("prep_min", "cook_min", "total_min")
+TIME_KEYS = ("prep_min", "cook_min", "total_min")  # active_min is kept apart: it is read from the page, never guessed
 TIME_HINT = re.compile(r"prep(?:aration)?\s*time|cook(?:ing)?\s*time|total\s*time|\bprep\s*:|\bcook\s*:|\btotal\s*:|\bactive\s*:", re.I)
 
 
@@ -818,6 +840,10 @@ def process(d: Path):
     extras = r.pop("page_extras", [])
     if (d / "page.html").exists():
         r["recipe_notes"] = extract_notes((d / "page.html").read_text(errors="replace", encoding="utf-8")) + extras
+    if fx.get("redirected_elsewhere") and not r.get("needs_review"):
+        r["needs_review"] = f"the link now redirects to a different page: {fx.get('final_url')}"
+    if r.get("active_min") and r.get("cook_min") == r["active_min"] and not r.get("prep_min"):
+        r["cook_min"] = None  # a page's Active time is not its cooking time
     if not r.get("recipe_notes") and not r.get("needs_review") and NOTE_REF.search(" ".join(r.get("steps") or [])):
         r["needs_review"] = "a step refers to a recipe note that was not found on the page"
     cover = "thumbnail.jpg" if (d / "thumbnail.jpg").exists() else None
