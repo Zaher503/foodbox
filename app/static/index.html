@@ -616,6 +616,8 @@ async function setCover(file){
   finally{box.style.opacity=""}
 }
 let picIdx=0;
+// a cover the server could not download: the browser loads the page's own picture directly
+const remoteHero=u=>el("img",{class:"hero",src:u,alt:"",referrerpolicy:"no-referrer",onerror:e=>e.target.replaceWith(el("div",{class:"nohero"},"No cover photo yet"))});
 const picsOf=r=>{const l=[];if(r.cover)l.push(r.cover);for(const n of r.photos||[]){const p="shots/"+n;if(!l.includes(p))l.push(p)}return l};
 function swapHero(){picIdx=0;paintPics()}
 function cyc(d){const n=picsOf(current).length;if(n<2)return;picIdx=(picIdx+d+n)%n;paintPics()}
@@ -639,6 +641,7 @@ function paintPics(){
   const pics=picsOf(r);if(picIdx>=pics.length||picIdx<0)picIdx=0;
   const cur=pics[picIdx]||null,old=w.querySelector(".hero,.nohero"),url=cur?`/files/${r.id}/${cur}`:null;
   if(cur){if(old.tagName!=="IMG"||old.getAttribute("src")!==url)old.replaceWith(el("img",{class:"hero",src:url,alt:""}))}
+  else if(r.cover_url){if(old.tagName!=="IMG"||old.getAttribute("src")!==r.cover_url)old.replaceWith(remoteHero(r.cover_url))}
   else if(old.tagName==="IMG")old.replaceWith(el("div",{class:"nohero"},"No cover photo yet"));
   w.querySelectorAll(".hnav").forEach(b=>{b.hidden=pics.length<2});
   const cnt=w.querySelector(".hcount");cnt.hidden=pics.length<2;cnt.textContent=(picIdx+1)+" / "+pics.length;
@@ -742,7 +745,7 @@ function heroBox(r,editing){
     r.has_thumb&&r.cover!=="thumbnail.jpg"?el("button",{onclick:async()=>{
       current=await api("/api/recipes/"+r.id,{method:"PATCH",body:JSON.stringify({cover:"thumbnail.jpg"})});if(editing)swapHero();else draw(false)}},"Use the original picture"):null);
   const w=el("div",{class:"herow"},
-    r.cover?el("img",{class:"hero",src:`/files/${r.id}/${r.cover}`,alt:""}):r.cover_url?el("img",{class:"hero",src:r.cover_url,alt:"",referrerpolicy:"no-referrer",onerror:e=>e.target.replaceWith(el("div",{class:"nohero"},"No cover photo yet"))}):el("div",{class:"nohero"},"No cover photo yet"),
+    r.cover?el("img",{class:"hero",src:`/files/${r.id}/${r.cover}`,alt:""}):r.cover_url?remoteHero(r.cover_url):el("div",{class:"nohero"},"No cover photo yet"),
     el("button",{class:"hnav prev",type:"button","aria-label":"Previous picture",hidden:true,onclick:()=>cyc(-1)},"‹"),
     el("button",{class:"hnav next",type:"button","aria-label":"Next picture",hidden:true,onclick:()=>cyc(1)},"›"),
     el("div",{class:"hcount",hidden:true}),
