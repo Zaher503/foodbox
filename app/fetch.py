@@ -38,7 +38,11 @@ def check_url(url: str) -> str:
     p = urlparse(url.strip())
     if p.scheme not in ("http", "https") or not p.hostname:
         raise ValueError("only http(s) links are accepted")
-    for fam, _, _, _, sa in socket.getaddrinfo(p.hostname, None):
+    try:
+        addrs = socket.getaddrinfo(p.hostname, None)
+    except socket.gaierror:
+        raise ValueError(f"the website {p.hostname} could not be found (the site may be gone, or the link has a typo)") from None
+    for fam, _, _, _, sa in addrs:
         ip = ipaddress.ip_address(sa[0])
         if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
             raise ValueError("link resolves to a private address")
@@ -194,6 +198,66 @@ def _usable(recipe) -> bool:
     return bool(recipe and recipe.get("recipeIngredient") and recipe.get("recipeInstructions"))
 
 
+MIN_COVER_PX = 600
+SIZE_IN_URL = re.compile(r"[-_.](\d{2,4})x(\d{2,4})(?=[./_-]|$)")
+
+
+def _image_candidates(html: str, recipe, base_url: str) -> list:
+    """[(url, pixels)] from the recipe's schema.org image(s), og:image and twitter:image, biggest first.
+    Pixels come from the ImageObject width/height or a "-225x225" style size in the file name; no hint
+    means a site original, which counts as big (WordPress lists the small crops first)."""
+    raw = []
+    img = (recipe or {}).get("image")
+    for i in (img if isinstance(img, list) else [img]):
+        if isinstance(i, dict):
+            w, h = str(i.get("width") or ""), str(i.get("height") or "")
+            raw.append((i.get("url") or i.get("contentUrl"), int(w) * int(h) if w.isdigit() and h.isdigit() else None))
+        else:
+            raw.append((i, None))
+    raw += [(_meta(html, "og:image"), None), (_meta(html, "twitter:image"), None)]
+    out, seen = [], set()
+    for u, px in raw:
+        if not isinstance(u, str) or not u.strip():
+            continue
+        u = urljoin(base_url, u.strip())
+        if u in seen:
+            continue
+        seen.add(u)
+        if px is None:
+            m = SIZE_IN_URL.search(u)
+            px = int(m.group(1)) * int(m.group(2)) if m else 10**8
+        out.append((u, px))
+    return sorted(out, key=lambda c: -c[1])  # stable: equal sizes keep the page's own order
+
+
+IMAGE_MAGIC = (bytes([0xFF, 0xD8, 0xFF]), bytes([0x89]) + b"PNG", b"GIF8")
+
+
+def _looks_like_image(b: bytes) -> bool:
+    """JPEG, PNG, GIF, WebP or AVIF/HEIC bytes (an HTML error page saved as a cover is not one)."""
+    return len(b) > 4000 and (b.startswith(IMAGE_MAGIC) or (b[:4] == b"RIFF" and b[8:12] == b"WEBP") or b[4:12] in (b"ftypavif", b"ftypheic"))
+
+
+def save_cover(d: Path, url: str, html: str, recipe):
+    """Download the best cover into thumbnail.jpg. Returns (remote_url, error): when every download fails the
+    page's own picture URL is kept (the browser can usually load it even where the server is refused) and the
+    reason is written to fetch.json instead of being swallowed."""
+    cands = _image_candidates(html, recipe, url)
+    big = [c for c in cands if c[1] >= MIN_COVER_PX ** 2] or cands  # skip thumbnails unless nothing else is left
+    errors = []
+    for u, _ in big[:4]:
+        try:
+            data = _get(check_url(u), 10_000_000)
+        except Exception as e:
+            errors.append(f"{urlparse(u).path.rsplit('/', 1)[-1][:40]}: {e}")
+            continue
+        if _looks_like_image(data):
+            (d / "thumbnail.jpg").write_bytes(data)
+            return None, None
+        errors.append(f"{urlparse(u).path.rsplit('/', 1)[-1][:40]}: not an image")
+    return (big[0][0] if big else None), ("; ".join(errors)[:300] or ("no picture found on the page" if not cands else None))
+
+
 def fetch_page(url: str) -> Path:
     try:
         html = _get(url).decode("utf-8", "replace")
@@ -215,19 +279,10 @@ def fetch_page(url: str) -> Path:
     d = make_dir(url, title)
     (d / "page.html").write_text(html, encoding="utf-8")
     (d / "jsonld.json").write_text(json.dumps(recipe, indent=2, ensure_ascii=False), encoding="utf-8")
-    img = (recipe or {}).get("image")
-    if isinstance(img, list):
-        img = img[0]
-    if isinstance(img, dict):
-        img = img.get("url")
-    img = img or _meta(html, "og:image")
-    if img:
-        try:
-            (d / "thumbnail.jpg").write_bytes(_get(check_url(urljoin(url, img)), 10_000_000))
-        except Exception:
-            pass  # a missing cover is not fatal
+    cover_url, cover_error = save_cover(d, url, html, recipe)
     (d / "fetch.json").write_text(json.dumps({
         "kind": "page", "source_url": url, "has_jsonld": _usable(recipe), "page_title": title,
+        "cover_url": cover_url, "cover_error": cover_error,
         "fetched_at": datetime.now(timezone.utc).isoformat()}, indent=2), encoding="utf-8")
     return d
 

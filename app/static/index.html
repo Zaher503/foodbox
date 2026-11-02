@@ -742,7 +742,7 @@ function heroBox(r,editing){
     r.has_thumb&&r.cover!=="thumbnail.jpg"?el("button",{onclick:async()=>{
       current=await api("/api/recipes/"+r.id,{method:"PATCH",body:JSON.stringify({cover:"thumbnail.jpg"})});if(editing)swapHero();else draw(false)}},"Use the original picture"):null);
   const w=el("div",{class:"herow"},
-    r.cover?el("img",{class:"hero",src:`/files/${r.id}/${r.cover}`,alt:""}):el("div",{class:"nohero"},"No cover photo yet"),
+    r.cover?el("img",{class:"hero",src:`/files/${r.id}/${r.cover}`,alt:""}):r.cover_url?el("img",{class:"hero",src:r.cover_url,alt:"",referrerpolicy:"no-referrer",onerror:e=>e.target.replaceWith(el("div",{class:"nohero"},"No cover photo yet"))}):el("div",{class:"nohero"},"No cover photo yet"),
     el("button",{class:"hnav prev",type:"button","aria-label":"Previous picture",hidden:true,onclick:()=>cyc(-1)},"‹"),
     el("button",{class:"hnav next",type:"button","aria-label":"Next picture",hidden:true,onclick:()=>cyc(1)},"›"),
     el("div",{class:"hcount",hidden:true}),
@@ -913,7 +913,7 @@ function card(r){
   const meta=cardMeta(r);
   return (el("div",{class:"cw"+(r.id===justAdded?" pop":""),"data-id":r.id},
     el("button",{class:"card",onclick:()=>open(r.id)},
-      el("div",{class:"ph",style:r.cover?`background-image:url("/files/${r.id}/${r.cover}")`:""},r.needs_review?el("span",{class:"flag"},"Needs review"):null),
+      el("div",{class:"ph",style:r.cover?`background-image:url("/files/${r.id}/${r.cover}")`:r.cover_url?`background-image:url("${encodeURI(r.cover_url).replace(/"/g,"%22")}")`:""},r.needs_review?el("span",{class:"flag"},"Needs review"):null),
       el("div",{class:"t"},el("span",{},r.title||"Untitled"),meta?el("small",{},meta):null)),
     el("button",{class:"kebab","aria-label":"Options",title:"Options",onclick:e=>{e.stopPropagation();cardMenu(e.currentTarget,r)}},ico("M12 5h.01M12 12h.01M12 19h.01",20,3.2)),
     el("button",{class:"heart"+(r.favorite?" on":""),"aria-label":"Favorite",title:"Favorite",onclick:async e=>{e.stopPropagation();await api("/api/recipes/"+r.id,{method:"PATCH",body:JSON.stringify({favorite:!r.favorite})});load()}},heartSvg(r.favorite))));

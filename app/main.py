@@ -158,6 +158,7 @@ def write_stub(d: Path, url: str, err: str):
              "source_note": "Pasted recipe" if is_text else None,
              "paste_hash": text_hash(fx["pasted_text"]) if is_text else None,
              "cover": "thumbnail.jpg" if (d / "thumbnail.jpg").exists() else None,
+             "cover_url": None if (d / "thumbnail.jpg").exists() else fx.get("cover_url"),
              "has_video": (d / "source.mp4").exists(),
              "needs_review": f"failed: {err[:300]}", "processed_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
 
@@ -497,7 +498,7 @@ def recipes(meal: str = "", q_: str = Query("", alias="q"), sort: str = "new", t
     else:
         rs.sort(key=(lambda r: (r.get("title") or "").lower()) if sort == "az"
                 else (lambda r: r.get("processed_at") or ""), reverse=(sort != "az"))
-    keep = ("id", "title", "meal", "cover", "needs_review", "kind", "has_video", "source_url", "tags", "favorite", "added_by",
+    keep = ("id", "title", "meal", "cover", "cover_url", "needs_review", "kind", "has_video", "source_url", "tags", "favorite", "added_by",
             "prep_min", "cook_min", "total_min")
     counts = {m: 0 for m in MEALS}
     review = favs = 0

@@ -321,7 +321,7 @@ def unescape(text):
         if "&" not in text:
             break
         text = htmllib.unescape(text)
-    return text.replace("\xa0", " ")
+    return re.sub("[\u200b\u200c\u200d\u2060\ufeff]", "", text.replace("\xa0", " "))
 
 
 def tidy_parens(s):
@@ -379,6 +379,40 @@ def ground(ingredients, steps, corpus):
     return ing, stp, dropped, changes
 
 
+EQUIPMENT = re.compile(r"\s*equipment\s*:", re.I)
+STEP_LABEL = re.compile(r"[A-Z][^.!?:]{1,60}:")
+STEP_LISTS = ("tasty-recipes-instructions", "wprm-recipe-instructions")
+
+
+def label_steps(steps, html: str):
+    """Recipe cards show a bold label before each step ("Mix sauce ingredients:") that schema.org drops, and may add
+    tips as extra list items. Returns (steps with their labels put back, tips that belong to no step)."""
+    import lxml.html
+    doc = lxml.html.fromstring(html)
+    cls = lambda n: f"contains(concat(' ', normalize-space(@class), ' '), ' {n} ')"
+    for name in STEP_LISTS:
+        # only list items with no list inside, so a tip nested under a step is its own item
+        items = doc.xpath(f"//*[{cls(name)}]//li[not(.//li)]")
+        if items:
+            break
+    else:
+        return steps, []
+    page = [re.sub(r"\s+", " ", unescape(i.text_content())).strip() for i in items]
+    out, used = [], set()
+    for s in steps:
+        new = s
+        for n, p in enumerate(page):
+            if n not in used and p != s and p.endswith(s) and STEP_LABEL.fullmatch(p[:-len(s)].strip()):
+                new = p
+                used.add(n)
+                break
+        else:
+            used.update(n for n, p in enumerate(page) if p == s)
+        out.append(new)
+    extras = [p for n, p in enumerate(page) if n not in used and p and not any(p in o for o in out)]
+    return out, extras[:6]
+
+
 def from_jsonld(d: Path):
     ld = json.loads((d / "jsonld.json").read_text(encoding="utf-8"))
     steps = []
@@ -392,13 +426,19 @@ def from_jsonld(d: Path):
     y = ld.get("recipeYield")
     y = y[0] if isinstance(y, list) and y else y
     ingredients = clean_list(ld.get("recipeIngredient"))
+    steps = clean_list(re.sub(r"<[^>]+>", "", s) for s in steps)
+    extras = []
     try:
-        ingredients = apply_groups(ingredients, html_ingredient_groups((d / "page.html").read_text(encoding="utf-8")))
+        html = (d / "page.html").read_text(encoding="utf-8")
+        ingredients = apply_groups(ingredients, html_ingredient_groups(html))
+        steps, extras = label_steps(steps, html)
     except Exception:
-        pass  # grouping is a bonus; the flat list is still right
+        pass  # grouping and labels are a bonus; the flat lists are still right
+    equipment = [i for i in ingredients if EQUIPMENT.match(i)]  # a tool list some recipe cards put among the ingredients
+    ingredients = [i for i in ingredients if i not in equipment]
     return {"title": unescape(ld.get("name") or ""), "servings": str(y) if y else None,
-            "ingredients": ingredients,
-            "steps": clean_list(re.sub(r"<[^>]+>", "", s) for s in steps),
+            "ingredients": ingredients, "page_extras": [e[:1].upper() + e[1:] for e in equipment] + extras,
+            "steps": steps,
             "nutrition": nutrition_from_ld(ld),
             "prep_min": iso_minutes(ld.get("prepTime")), "cook_min": iso_minutes(ld.get("cookTime")),
             "total_min": iso_minutes(ld.get("totalTime")),
@@ -479,7 +519,8 @@ def recipe_window(text: str, limit=7000) -> str:
     return text[:limit]
 
 
-NOTE_BOXES = ("wprm-recipe-notes", "tasty-recipes-notes", "mv-create-notes", "recipe-notes", "recipe__notes")
+NOTE_BOXES = ("wprm-recipe-notes", "tasty-recipes-notes", "mv-create-notes", "recipe-notes", "recipe__notes", "o-ChefNotes")
+NOTE_TITLE = re.compile(r"(cook.s |chef.s |recipe )?notes?:?", re.I)
 
 
 def extract_notes(html: str):
@@ -511,9 +552,12 @@ def extract_notes(html: str):
     out = []
     for line in box.text_content().split("\n"):
         line = re.sub(r"\s+", " ", unescape(line)).strip()
-        if line and line.lower().rstrip(":") != "notes":
+        if line and not NOTE_TITLE.fullmatch(line):
             out.append(line[:2000])
     return out[:30]
+
+
+NOTE_REF = re.compile(r"\(see (the |recipe |cook.s |chef.s )?notes?\b|\bsee (the )?(recipe |cook.s |chef.s )?notes? (below|above)", re.I)
 
 
 def finish(r, corpus, title_fallback="", evidence_min=60):
@@ -640,16 +684,19 @@ def add_servings(r):
 
 
 TIME_KEYS = ("prep_min", "cook_min", "total_min")
-TIME_HINT = re.compile(r"prep(?:aration)?\s*time|cook(?:ing)?\s*time|total\s*time|\bprep\s*:|\bcook\s*:", re.I)
+TIME_HINT = re.compile(r"prep(?:aration)?\s*time|cook(?:ing)?\s*time|total\s*time|\bprep\s*:|\bcook\s*:|\btotal\s*:|\bactive\s*:", re.I)
 
 
 def iso_minutes(s):
     """schema.org duration (PT1H30M) -> whole minutes or None."""
-    m = re.fullmatch(r"P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:\d+S)?)?", str(s or "").strip())
+    # Also the long form some sites write ("P0Y0M0DT0H35M0.000S"): years/months only when zero, seconds may be fractional
+    m = re.fullmatch(r"P(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:\d+(?:\.\d+)?S)?)?", str(s or "").strip())
     if not m:
         return None
-    d, h, mi = (int(x or 0) for x in m.groups())
-    n = d * 1440 + h * 60 + mi
+    y, mo, w, d, h, mi = (int(x or 0) for x in m.groups())
+    if y or mo:
+        return None
+    n = w * 10080 + d * 1440 + h * 60 + mi
     return n if 1 <= n <= 2880 else None
 
 
@@ -768,10 +815,13 @@ def process(d: Path):
     r["tags"] = gen_tags(r)
     r.setdefault("favorite", False)
     r.setdefault("notes", "")
+    extras = r.pop("page_extras", [])
     if (d / "page.html").exists():
-        r["recipe_notes"] = extract_notes((d / "page.html").read_text(errors="replace", encoding="utf-8"))
+        r["recipe_notes"] = extract_notes((d / "page.html").read_text(errors="replace", encoding="utf-8")) + extras
+    if not r.get("recipe_notes") and not r.get("needs_review") and NOTE_REF.search(" ".join(r.get("steps") or [])):
+        r["needs_review"] = "a step refers to a recipe note that was not found on the page"
     cover = "thumbnail.jpg" if (d / "thumbnail.jpg").exists() else None
-    r.update(source_url=fx["source_url"], kind=fx["kind"], cover=cover,
+    r.update(source_url=fx["source_url"], kind=fx["kind"], cover=cover, cover_url=None if cover else fx.get("cover_url"),
              has_video=(d / "source.mp4").exists(), processed_at=time.strftime("%Y-%m-%dT%H:%M:%S"))
     if fx["kind"] == "text":
         r["source_note"] = "Pasted recipe"
