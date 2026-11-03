@@ -393,6 +393,10 @@ html .herow{margin:0}
 html .hero{width:100%;height:320px;max-height:none;object-fit:cover;border-radius:0;box-shadow:none}
 html .nohero{height:120px;border-radius:0}
 html .heroadd,html .hdel,html .hset{top:64px}
+img.hero{cursor:zoom-in}
+html .heroedit{right:14px;bottom:14px;width:44px;height:44px;min-height:0;padding:0;border-radius:50%;border:1px solid rgba(255,255,255,.28);color:#fff;background:rgba(28,28,30,.55) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 8.5A1.5 1.5 0 0 1 5.5 7h2.2l1.2-1.8A1 1 0 0 1 9.700 4.800h4.600a1 1 0 0 1 .8.4L16.300 7h2.200A1.500 1.500 0 0 1 20 8.500v9a1.500 1.500 0 0 1-1.500 1.500h-13A1.500 1.500 0 0 1 4 17.500Z'/%3E%3Ccircle cx='12' cy='12.700' r='3.300'/%3E%3C/svg%3E") center/22px no-repeat;backdrop-filter:blur(20px) saturate(1.6);-webkit-backdrop-filter:blur(20px) saturate(1.6);box-shadow:0 2px 10px rgba(0,0,0,.3)}
+html .heroedit:hover{background-color:var(--accf)}
+@media (prefers-reduced-transparency:reduce){html .heroedit{background-color:#1c1c1e;backdrop-filter:none;-webkit-backdrop-filter:none}}
 html #detail h1,html #detail>h1{font:700 32px/1.12 var(--display);letter-spacing:-.025em;margin-top:22px;margin-bottom:10px}
 html .meta{font-size:15px;color:var(--mute);gap:10px}
 html .meta select{border:0;background:var(--fill);border-radius:99px;padding:5px 12px;font-size:14px;font-weight:500}
@@ -755,7 +759,36 @@ function heroBox(r,editing){
   let x0=null;
   w.addEventListener("touchstart",e=>{x0=e.touches[0].clientX},{passive:true});
   w.addEventListener("touchend",e=>{if(x0===null)return;const dx=e.changedTouches[0].clientX-x0;x0=null;if(Math.abs(dx)>50)cyc(dx<0?1:-1)});
+  w.addEventListener("click",e=>{if(e.target.matches("img.hero"))zoomHero(e.target)});
   return w;
+}
+// click the big picture to grow it in place to its full shape (the page below slides down); it folds back slowly on scroll, click elsewhere or Esc
+let heroOpen=null;
+function zoomHero(img){
+  if(heroOpen){heroOpen.fold(340);return}
+  if(!img.naturalWidth)return;
+  const slow=matchMedia("(prefers-reduced-motion:reduce)").matches?0:1,ease="cubic-bezier(.32,.72,0,1)";
+  const h0=img.getBoundingClientRect().height,w=img.getBoundingClientRect().width;
+  const h1=Math.min(w*img.naturalHeight/img.naturalWidth,innerHeight*.92);
+  if(h1<h0+8)return;
+  img.style.height=h0+"px";img.style.maxHeight="none";img.style.cursor="zoom-out";
+  img.getBoundingClientRect();
+  img.style.transition=`height ${420*slow}ms ${ease}`;img.style.height=h1+"px";
+  const y0=[...document.querySelectorAll("#detail,#sheet")].map(s=>s.scrollTop);
+  let done=false;
+  const fold=ms=>{
+    if(done)return;done=true;
+    removeEventListener("keydown",key);document.removeEventListener("scroll",onScroll,true);document.removeEventListener("click",away,true);
+    heroOpen=null;
+    img.style.transition=`height ${ms*slow}ms ${ease}`;img.style.height=h0+"px";
+    const end=()=>{img.style.height=img.style.maxHeight=img.style.transition=img.style.cursor=""};
+    if(!slow)end();else{img.addEventListener("transitionend",end,{once:true});setTimeout(end,ms+150)}
+  };
+  const key=e=>{if(e.key==="Escape")fold(500)};
+  const away=e=>{if(!e.target.closest("img.hero"))fold(500)};
+  const onScroll=e=>{const s=e.target;if(s.scrollTop===undefined)return;const i=[...document.querySelectorAll("#detail,#sheet")].indexOf(s);if(Math.abs(s.scrollTop-(y0[i]||0))>12)fold(900)};
+  addEventListener("keydown",key);document.addEventListener("scroll",onScroll,true);document.addEventListener("click",away,true);
+  heroOpen={fold};
 }
 document.addEventListener("click",e=>{if(e.target.closest(".heroedit"))return;document.querySelectorAll(".hmenu:not([hidden])").forEach(m=>{m.hidden=true})});
 $("#coverFile").onchange=e=>{const f=e.target.files[0];e.target.value="";setCover(f)};
