@@ -1246,12 +1246,12 @@ function draw(editing){
       const tx=tr.querySelector(".tx").cloneNode(true);tx.querySelectorAll(".flagnote").forEach(n=>n.remove());
       return (tr.querySelector(".am").textContent+" "+tx.textContent).replace(/\s+/g," ").trim()}).filter(Boolean);
     if(!items.length){toast({title:"Nothing to add",text:"Every ingredient is crossed off"});return}
-    if(!confirm(`Add ${items.length} item${items.length===1?"":"s"} to Groceries list?`))return;
+    if(!confirm(`Send ${items.length} item${items.length===1?"":"s"} to your Groceries notification?`))return;
     btn.disabled=true;
-    try{const res=await api("/api/ui/keep",{method:"POST",body:JSON.stringify({items})});
-      toast({title:"Added to Groceries",text:`${res.added} added`+(res.skipped?`, ${res.skipped} already on the list`:"")})}
-    catch(err){toast({kind:"err",title:"Couldn't add to Keep",text:err.message})}
-    btn.disabled=false}},"Add to Groceries (Keep)"));
+    try{const res=await api("/api/ui/groceries",{method:"POST",body:JSON.stringify({items})});
+      toast({title:"Sent to Groceries",text:`${res.sent} item${res.sent===1?"":"s"} sent to your phone`})}
+    catch(err){toast({kind:"err",title:"Couldn't send Groceries",text:err.message})}
+    btn.disabled=false}},"Add to Groceries list"));
   if(editing)colA.append(el("div",{class:"addbar"},el("button",{type:"button",class:"btn addrow",onclick:()=>{const n=ingRow("");ul.append(n);n.querySelector(".am .ce").focus()}},"+ Ingredient"),el("button",{type:"button",class:"btn addrow",onclick:()=>{const n=ingRow("## ");ul.append(n);n.querySelector(".ce").focus()}},"+ Heading")));
   if(editing||r.steps?.length){
     colB.append(el("h2",{},"Directions"),ol);
