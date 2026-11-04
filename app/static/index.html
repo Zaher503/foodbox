@@ -1249,7 +1249,7 @@ function draw(editing){
     if(!confirm(`Send ${items.length} item${items.length===1?"":"s"} to your Groceries notification?`))return;
     btn.disabled=true;
     try{const res=await api("/api/ui/groceries",{method:"POST",body:JSON.stringify({items})});
-      toast({title:"Sent to Groceries",text:`${res.sent} item${res.sent===1?"":"s"} sent to your phone`})}
+      toast({title:"Sent to Groceries",text:`${res.sent} item${res.sent===1?"":"s"} sent to your phone`+(res.messages>1?` in ${res.messages} notifications`:"")})}
     catch(err){toast({kind:"err",title:"Couldn't send Groceries",text:err.message})}
     btn.disabled=false}},"Add to Groceries list"));
   if(editing)colA.append(el("div",{class:"addbar"},el("button",{type:"button",class:"btn addrow",onclick:()=>{const n=ingRow("");ul.append(n);n.querySelector(".am .ce").focus()}},"+ Ingredient"),el("button",{type:"button",class:"btn addrow",onclick:()=>{const n=ingRow("## ");ul.append(n);n.querySelector(".ce").focus()}},"+ Heading")));

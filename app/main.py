@@ -384,6 +384,9 @@ def _preview(name):
     return out
 
 
+MSG_LINES, MSG_CHARS = 6, 200  # per Groceries notification
+
+
 @app.post("/api/ui/groceries")  # send the ingredient lines to a phone as a Home Assistant notification
 def ui_groceries(body: dict = Body(...)):
     throttle()
@@ -391,18 +394,28 @@ def ui_groceries(body: dict = Body(...)):
     service = os.environ.get("HA_NOTIFY_SERVICE", "mobile_app_zahers_17pm").removeprefix("notify.")
     if not url or not token:
         raise HTTPException(503, "Home Assistant is not configured (HA_URL / HA_TOKEN)")
-    items = [re.sub(r"\s+", " ", str(x)).strip()[:300] for x in body.get("items") or []]
+    items = [re.sub(r"\s+", " ", str(x)).strip()[:MSG_CHARS] for x in body.get("items") or []]
     items = [x for x in dict.fromkeys(items) if x][:100]
     if not items:
         raise HTTPException(400, "nothing to add")
+    # iOS cuts long bodies off, so split into several notifications: at most 6 lines and 200 characters each
+    chunks, cur = [], []
+    for x in items:
+        if cur and (len(cur) >= MSG_LINES or len("\n".join(cur + [x])) > MSG_CHARS):
+            chunks.append(cur)
+            cur = []
+        cur.append(x)
+    chunks.append(cur)
     try:
-        r = requests.post(f"{url}/api/services/notify/{service}", timeout=15,
-                          headers={"Authorization": f"Bearer {token}"},
-                          json={"title": "Groceries", "message": "\n".join(items)})
-        r.raise_for_status()
+        for n, c in enumerate(chunks, 1):
+            r = requests.post(f"{url}/api/services/notify/{service}", timeout=15,
+                              headers={"Authorization": f"Bearer {token}"},
+                              json={"title": "Groceries" if len(chunks) == 1 else f"Groceries {n}/{len(chunks)}",
+                                    "message": "\n".join(c)})
+            r.raise_for_status()
     except Exception as e:
         raise HTTPException(502, f"Home Assistant error: {str(e)[:150]}")
-    return {"sent": len(items)}
+    return {"sent": len(items), "messages": len(chunks)}
 
 
 @app.post("/api/ui/manual")  # blank recipe typed in by hand (recipe book, family card, ...)
