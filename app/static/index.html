@@ -519,7 +519,17 @@ html #dlg h3{margin:0 0 12px;font:600 18px var(--display)}
 const MEALS=["Breakfast","Lunch","Dinner","Snack","Dessert","Other"];
 const $=s=>document.querySelector(s);
 const el=(t,p={},...k)=>{const e=document.createElement(t);for(const[a,v]of Object.entries(p)){if(a==="class")e.className=v;else if(a.startsWith("on"))e[a]=v;else if(v!==false&&v!=null)e.setAttribute(a,v===true?"":v)}for(const c of k.flat())if(c!=null)e.append(c);return e};
-const api=async(u,o={})=>{const r=await fetch(u,{...o,headers:{"Content-Type":"application/json",...(o.headers||{})}});if(!r.ok)throw new Error((await r.text()).slice(0,200));return r.json()};
+let sessionDead=false;
+const expired=()=>{if(sessionDead)return;sessionDead=true;
+  toast({kind:"err",title:"Session expired",text:"Reload to sign in again",action:"Reload",ms:60000,onAction:()=>location.reload()});
+  setTimeout(()=>{sessionDead=false},30000)};
+const api=async(u,o={})=>{
+  let r;
+  // A blocked login redirect (expired Authentik session) surfaces as a TypeError
+  try{r=await fetch(u,{...o,headers:{"Content-Type":"application/json",...(o.headers||{})}})}
+  catch(e){if(navigator.onLine)expired();throw e}
+  if(r.status===401||r.status===403){expired();throw new Error("Session expired")}
+  if(!r.ok)throw new Error((await r.text()).slice(0,200));return r.json()};
 const heartSvg=on=>{const n="http://www.w3.org/2000/svg",v=document.createElementNS(n,"svg"),p=document.createElementNS(n,"path");v.setAttribute("viewBox","0 0 24 24");v.setAttribute("width","18");v.setAttribute("height","18");p.setAttribute("d","M12 20.5S3.5 15.4 3.5 9.4A4.6 4.6 0 0 1 12 7a4.6 4.6 0 0 1 8.5 2.4c0 6-8.5 11.1-8.5 11.1z");p.setAttribute("fill",on?"currentColor":"none");p.setAttribute("stroke","currentColor");p.setAttribute("stroke-width","2");v.append(p);return v};
 const ico=(d,w=14,sw=2)=>{const n="http://www.w3.org/2000/svg",v=document.createElementNS(n,"svg");v.setAttribute("viewBox","0 0 24 24");v.setAttribute("width",w);v.setAttribute("height",w);v.setAttribute("fill","none");v.setAttribute("stroke","currentColor");v.setAttribute("stroke-width",sw);v.setAttribute("stroke-linecap","round");v.setAttribute("stroke-linejoin","round");for(const x of [].concat(d)){const p=document.createElementNS(n,"path");p.setAttribute("d",x);v.append(p)}return v};
 const ICO={right:"M9 6l6 6-6 6",left:"M15 6l-6 6 6 6",down:"M6 9l6 6 6-6",ext:["M14 4h6v6","M20 4l-9 9","M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"],panel:["M4 5h16v14H4z","M9 5v14"]};
@@ -949,7 +959,7 @@ function cardMeta(r){
 function card(r){
   const meta=cardMeta(r);
   return (el("div",{class:"cw"+(r.id===justAdded?" pop":""),"data-id":r.id},
-    el("button",{class:"card",onclick:()=>open(r.id)},
+    el("button",{class:"card",onclick:()=>open(r.id).catch(()=>{if(!sessionDead)toast({kind:"err",title:"Couldn't open recipe",text:r.title||""})})},
       el("div",{class:"ph",style:r.cover?`background-image:url("/files/${r.id}/${r.cover}")`:r.cover_url?`background-image:url("${encodeURI(r.cover_url).replace(/"/g,"%22")}")`:""},r.needs_review?el("span",{class:"flag"},"Needs review"):null),
       el("div",{class:"t"},el("span",{},r.title||"Untitled"),meta?el("small",{},meta):null)),
     el("button",{class:"kebab","aria-label":"Options",title:"Options",onclick:e=>{e.stopPropagation();cardMenu(e.currentTarget,r)}},ico("M12 5h.01M12 12h.01M12 19h.01",20,3.2)),
@@ -1385,6 +1395,9 @@ addEventListener("keydown",e=>{
   close();
 });
 setDT();mq.addEventListener("change",setDT);
+// Returning to a long-idle tab: probe the API so an expired session is reported right away
+const probe=()=>{if(!document.hidden)api("/api/jobs").catch(()=>{})};
+document.addEventListener("visibilitychange",probe);addEventListener("pageshow",probe);
 (async()=>{await load();startPoll();const h=location.hash.slice(1);
   if(h)open(h).catch(()=>{})})();
 </script>
