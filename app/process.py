@@ -7,6 +7,7 @@ import html as htmllib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -153,8 +154,10 @@ def ollama(prompt, images=None, num_ctx=8192, fmt="json", timeout=300):
 
 
 def _ollama(prompt, images, num_ctx, fmt, timeout):
-    body = {"model": VL, "prompt": prompt, "stream": False, "format": fmt,
+    body = {"model": VL, "prompt": prompt, "stream": False,
             "options": {"num_ctx": num_ctx, "temperature": 0.1}, "think": False}  # no reasoning tokens: faster, JSON stays clean
+    if fmt:
+        body["format"] = fmt
     if images:
         body["images"] = [base64.b64encode(Path(i).read_bytes()).decode() for i in images]
     r = requests.post(OLLAMA, json=body, headers=_hub_headers(), timeout=timeout)
@@ -162,7 +165,7 @@ def _ollama(prompt, images, num_ctx, fmt, timeout):
         body.pop("think")
         r = requests.post(OLLAMA, json=body, headers=_hub_headers(), timeout=timeout)
     r.raise_for_status()
-    return json.loads(r.json()["response"])
+    return json.loads(r.json()["response"]) if fmt else r.json()["response"]
 
 
 FRAME_PROMPT = (
@@ -519,6 +522,103 @@ def from_pasted_text(d: Path, fx: dict, log: dict):
     return r
 
 
+PAGE_OCR_PROMPT = (
+    "This is a photo of a recipe page from a cookbook or magazine. Copy every word of printed text exactly "
+    "as it appears, keeping the line breaks. If the page has columns, copy each column from top to bottom "
+    "before moving to the next one. Copy quantities, fractions (1/2, ½), temperatures and times exactly "
+    "as printed. Do not fix, summarise, translate or add anything. Reply with the text only; reply with "
+    "nothing if there is no readable text."
+)
+# 1 = read each page whole; 2-4 = cut it into that many overlapping horizontal strips first (sharper small print)
+OCR_TILES = max(1, min(4, int(os.environ.get("PHOTO_OCR_TILES") or 1)))
+
+PHOTO_PROMPT = PASTE_PROMPT.replace(
+    "from pasted text. Use ONLY the text below.",
+    "from text that was read off photos of a cookbook or magazine page. Use ONLY the text below.",
+).replace(
+    "Rules:\n",
+    "Rules:\n- The photos may also show page numbers, headers, photo credits, ads, or part of a different "
+    "recipe. Use the one recipe whose ingredients and method are both shown; ignore everything else.\n"
+    "- The text was read by a machine and may have small reading errors. Fix obvious misspellings of "
+    "words, but never change a number.\n",
+).replace("PASTED TEXT:", "TEXT READ FROM THE PHOTOS:")
+
+
+def page_tiles(page: Path, n: int, out: Path) -> list:
+    """Cut a page into n horizontal strips that overlap a little, so no line is cut in half."""
+    if n <= 1:
+        return [page]
+    from PIL import Image
+    with Image.open(page) as im:
+        w, h = im.size
+        step, pad = h / n, int(h / n * 0.08)
+        tiles = []
+        for i in range(n):
+            t = out / f"{page.stem}_t{i + 1}.jpg"
+            im.crop((0, max(0, int(i * step) - pad), w, min(h, int((i + 1) * step) + pad))).save(t, "JPEG", quality=92)
+            tiles.append(t)
+    return tiles
+
+
+def join_strips(parts: list) -> str:
+    """Join strip texts, dropping the lines repeated in the overlap between two strips."""
+    key = lambda ln: re.sub(r"\W+", " ", ln.lower()).strip()  # noqa: E731
+    out: list = []
+    for part in parts:
+        lines = [ln for ln in part.splitlines()]
+        tail = {key(ln) for ln in out[-8:] if key(ln)}
+        while lines and (not key(lines[0]) or key(lines[0]) in tail) and len(lines) > 1:
+            lines.pop(0)
+        out.extend(lines)
+    return "\n".join(out).strip()
+
+
+def read_pages(pages: list, tiles: int = OCR_TILES, tmp: Path | None = None) -> list:
+    """Text of each page, read by the vision model. Returns [{"page", "text", "err"?}]."""
+    out = []
+    for p in pages:
+        parts, err = [], None
+        for t in page_tiles(p, tiles, tmp or p.parent):
+            try:
+                parts.append(str(ollama(PAGE_OCR_PROMPT, [t], num_ctx=8192, fmt=None, timeout=300)).strip())
+            except Exception as e:
+                err = str(e)[:120]
+            finally:
+                if t != p:
+                    t.unlink(missing_ok=True)
+        out.append({"page": p.name, "text": join_strips(parts), **({"err": err} if err else {})})
+    return out
+
+
+def from_photos(d: Path, fx: dict, log: dict):
+    pages = [d / "shots" / n for n in fx.get("pages", []) if (d / "shots" / n).exists()]
+    t0 = time.time()
+    if pages:
+        stage(d, "ocr")
+        tmp = d / "_tiles"
+        tmp.mkdir(exist_ok=True)
+        try:
+            scan = read_pages(pages, OCR_TILES, tmp)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        (d / "ocr.json").write_text(json.dumps(scan, indent=1, ensure_ascii=False), encoding="utf-8")
+        text = "\n\n".join(s["text"] for s in scan if s["text"])
+        (d / "page.txt").write_text(text, encoding="utf-8")
+    elif (d / "page.txt").exists():  # the page photos were deleted: reuse what was read before
+        text = (d / "page.txt").read_text(encoding="utf-8")
+    else:
+        raise RuntimeError("the scanned pages are gone; add the photos again")
+    log["ocr_s"], log["ocr_chars"], log["ocr_tiles"] = round(time.time() - t0, 1), len(text), OCR_TILES
+    if len(text.split()) < 15:
+        raise RuntimeError("could not read the text in the photo; try a closer, sharper, well-lit shot")
+    stage(d, "writing")
+    fallback = fx.get("source_note") or "Scanned recipe"
+    r = ollama(PHOTO_PROMPT.format(meals=MEALS, text=text[:12000]), num_ctx=8192, timeout=300)
+    r, dropped = finish(r, text, fallback, evidence_min=30)  # a recipe card can be short; the page text is all we get
+    log["dropped"] = dropped
+    return r
+
+
 ING_HEAD = re.compile(r"\W*(ingredients?|what you.?ll need|you will need)\W*", re.I)
 
 
@@ -798,6 +898,9 @@ def process(d: Path):
         stage(d, "writing")
         r = from_pasted_text(d, fx, log)
         nut_corpus = fx.get("pasted_text", "")
+    elif fx["kind"] == "photo":
+        r = from_photos(d, fx, log)
+        nut_corpus = (d / "page.txt").read_text(encoding="utf-8")
     else:
         video = d / "source.mp4"
         stage(d, "transcribing")
@@ -849,6 +952,9 @@ def process(d: Path):
     cover = "thumbnail.jpg" if (d / "thumbnail.jpg").exists() else None
     r.update(source_url=fx["source_url"], kind=fx["kind"], cover=cover, cover_url=None if cover else fx.get("cover_url"),
              has_video=(d / "source.mp4").exists(), processed_at=time.strftime("%Y-%m-%dT%H:%M:%S"))
+    if fx["kind"] == "photo":
+        r["source_note"] = fx.get("source_note") or "Scanned from a photo"
+        r["photo_hash"] = fx.get("photo_hash")
     if fx["kind"] == "text":
         r["source_note"] = "Pasted recipe"
         r["paste_hash"] = hashlib.sha1(re.sub(r"\s+", " ", fx.get("pasted_text", "").strip().lower()).encode()).hexdigest()

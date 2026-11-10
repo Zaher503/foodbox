@@ -336,6 +336,61 @@ def fetch_text(text: str) -> Path:
     return d
 
 
+PHOTO_COVER = "/icons/scan-cover.svg"  # generic cover for scanned recipes until one is picked
+PAGE_MAX = 2400  # long side of a stored page; small print needs the pixels
+
+
+def photo_hash(blobs: list) -> str:
+    """Same photos in the same order give the same hash (used to spot a repeat upload)."""
+    h = hashlib.sha1()
+    for b in blobs:
+        h.update(hashlib.sha1(b).digest())
+    return h.hexdigest()
+
+
+def to_jpeg(data: bytes, max_side: int = PAGE_MAX) -> bytes:
+    """Any phone photo (JPEG, PNG, WebP, HEIC) -> upright RGB JPEG no larger than max_side."""
+    import io
+
+    from PIL import Image, ImageOps
+    try:
+        import pillow_heif
+        pillow_heif.register_heif_opener()
+    except ImportError:
+        pass
+    try:
+        im = Image.open(io.BytesIO(data))
+        im = ImageOps.exif_transpose(im).convert("RGB")
+    except Exception:
+        raise ValueError("one of the files is not a readable image") from None
+    im.thumbnail((max_side, max_side))
+    out = io.BytesIO()
+    im.save(out, "JPEG", quality=90)
+    return out.getvalue()
+
+
+def scan_dir(h: str) -> str:
+    return f"{datetime.now():%Y-%m-%d}_scan_{h[:10]}"
+
+
+def fetch_photos(blobs: list, note: str = "") -> Path:
+    """Photos of a cookbook or magazine page. Pages go in shots/ so they show in the recipe's Photos;
+    the text is read off them in process.py."""
+    h = photo_hash(blobs)
+    pages = [to_jpeg(b) for b in blobs]  # convert first, so a bad file leaves no folder behind
+    d = DATA / scan_dir(h)
+    (d / "shots").mkdir(parents=True, exist_ok=True)
+    names = []
+    for i, jpg in enumerate(pages, 1):
+        names.append(f"page_{i}.jpg")
+        (d / "shots" / names[-1]).write_bytes(jpg)
+    meta = {"kind": "photo", "source_url": "", "pages": names, "photo_hash": h,
+            "source_note": note, "page_title": note or "Scanned recipe", "cover_url": PHOTO_COVER,
+            "fetched_at": datetime.now(timezone.utc).isoformat()}
+    (d / "fetch.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    return d
+
+
 def fetch(url: str) -> Path:
     url = check_url(url)
     return fetch_video(url) if is_video(url) else fetch_page(url)

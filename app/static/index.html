@@ -272,6 +272,21 @@ ol.st li.needck{outline:2px solid var(--warn);outline-offset:-2px}
 .srcbtn{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;font-size:14px;font-weight:600;color:var(--acc);border-color:color-mix(in srgb,var(--acc) 45%,var(--line))}
 .srcbtn svg{flex:none}
 .cmenu button svg{vertical-align:-2px;margin-left:6px;opacity:.7}
+/* Add menu (icons lead) and the photo scan panel */
+.cmenu.lead button{display:flex;align-items:center;gap:12px;min-height:44px}
+.cmenu.lead button svg{margin:0;opacity:.75;flex:none}
+.scanrow{margin-top:10px;display:flex;flex-direction:column;gap:10px}
+.spages{display:flex;gap:10px;overflow-x:auto;padding:2px}
+.spages:empty{display:none}
+.spage{position:relative;flex:none;width:84px;aspect-ratio:3/4;border-radius:10px;overflow:hidden;background:var(--line);box-shadow:0 0 0 1px var(--line)}
+.spage img{width:100%;height:100%;object-fit:cover;display:block}
+.spage b{position:absolute;left:6px;bottom:6px;min-width:22px;height:22px;padding:0 6px;border-radius:11px;background:rgba(0,0,0,.62);color:#fff;font-size:12px;display:grid;place-items:center}
+.spage button{position:absolute;top:4px;right:4px;width:28px;height:28px;border:0;border-radius:50%;background:rgba(0,0,0,.62);color:#fff;display:grid;place-items:center;cursor:pointer;padding:0}
+#scanNote{width:100%;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:9px 12px;font-size:16px;min-height:36px}
+html #scanNote{border:0;background:var(--fill)}
+.scanbtns{flex-wrap:wrap}
+.scanbtns .sgo{margin-left:auto;display:flex;gap:inherit}
+.scanhint{margin:0;font-size:13px;color:var(--mute)}
 /* Apple HIG redesign: tokens, floating sidebar and toolbar, photo grid, recipe sheet */
 html:root{
   --bg:#f2f2f7;--card:#fff;--bg2:#fff;--fill:rgba(120,120,128,.12);--fill2:rgba(120,120,128,.2);
@@ -484,13 +499,25 @@ html #dlg h3{margin:0 0 12px;font:600 18px var(--display)}
     <input type="search" id="q" placeholder="Search recipes" autocomplete="off" aria-label="Search recipes">
     <select id="sort" aria-label="Sort"><option value="new">Newest</option><option value="az">A–Z</option><option value="meal">By meal</option></select>
     <button class="btn iconb" id="themeBtn" type="button"></button>
-    <button class="btn pri addb" id="addBtn"><i></i>Add</button>
+    <button class="btn pri addb" id="addBtn" aria-haspopup="menu" aria-expanded="false"><i></i>Add</button>
   </div>
   <div class="row" id="addRow" style="display:none;margin-top:8px">
-    <textarea id="addUrl" rows="1" placeholder="Paste a link, or several (one per line)" spellcheck="false"></textarea>
+    <textarea id="addUrl" rows="1" placeholder="Paste a link, or several (one per line)" spellcheck="false" aria-label="Recipe link"></textarea>
     <button class="btn pri" id="addGo">Save</button>
-    <button class="btn" id="addManual" title="Type a recipe in yourself">Write one</button>
-    <button class="btn" id="addPaste" title="Paste the full recipe text and let the AI sort it out">Paste text</button>
+    <button class="btn" id="addCancel">Cancel</button>
+  </div>
+  <div id="scanRow" class="scanrow" style="display:none">
+    <div class="spages" id="scanPages" aria-label="Pages to scan"></div>
+    <input type="text" id="scanNote" maxlength="120" placeholder="Book or magazine, page (optional)" aria-label="Book or magazine" autocomplete="off">
+    <div class="row scanbtns">
+      <button class="btn" id="scanCam" type="button">Take photo</button>
+      <button class="btn" id="scanPick" type="button">Choose photos</button>
+      <span class="sgo">
+        <button class="btn" id="scanCancel" type="button">Cancel</button>
+        <button class="btn pri" id="scanGo" type="button" disabled>Save</button>
+      </span>
+    </div>
+    <p class="scanhint" id="scanHint">Up to 4 photos, in page order. Hold the phone straight over the page, fill the frame and use good light.</p>
   </div>
   <div class="row" id="pasteRow" style="display:none;margin-top:8px;align-items:flex-end">
     <textarea id="pasteBox" rows="6" style="resize:vertical;max-height:420px" placeholder="Paste the full recipe here — ingredients and instructions, in any order" spellcheck="false"></textarea>
@@ -514,6 +541,8 @@ html #dlg h3{margin:0 0 12px;font:600 18px var(--display)}
 <input type="file" id="file" accept="image/*" multiple hidden>
 <input type="file" id="coverFile" accept="image/*" hidden>
 <input type="file" id="coverCam" accept="image/*" capture="environment" hidden>
+<input type="file" id="scanCamIn" accept="image/*" capture="environment" hidden>
+<input type="file" id="scanFileIn" accept="image/*" multiple hidden>
 
 <script>
 const MEALS=["Breakfast","Lunch","Dinner","Snack","Dessert","Other"];
@@ -632,7 +661,8 @@ async function setCover(file){
 let picIdx=0;
 // a cover the server could not download: the browser loads the page's own picture directly
 const remoteHero=u=>el("img",{class:"hero",src:u,alt:"",referrerpolicy:"no-referrer",onerror:e=>e.target.replaceWith(el("div",{class:"nohero"},"No cover photo yet"))});
-const picsOf=r=>{const l=[];if(r.cover)l.push(r.cover);for(const n of r.photos||[]){const p="shots/"+n;if(!l.includes(p))l.push(p)}return l};
+const picsOf=r=>{const l=[];if(r.cover)l.push(r.cover);else if((r.cover_url||"").startsWith("/icons/"))l.push(r.cover_url);// generic cover of a scanned recipe
+  for(const n of r.photos||[]){const p="shots/"+n;if(!l.includes(p))l.push(p)}return l};
 function swapHero(){picIdx=0;paintPics()}
 function cyc(d){const n=picsOf(current).length;if(n<2)return;picIdx=(picIdx+d+n)%n;paintPics()}
 async function setCoverTo(path){
@@ -653,13 +683,13 @@ async function delPic(path){
 function paintPics(){
   const r=current,w=$("#detail .herow");if(!w||!r)return;
   const pics=picsOf(r);if(picIdx>=pics.length||picIdx<0)picIdx=0;
-  const cur=pics[picIdx]||null,old=w.querySelector(".hero,.nohero"),url=cur?`/files/${r.id}/${cur}`:null;
+  const cur=pics[picIdx]||null,old=w.querySelector(".hero,.nohero"),url=cur?(cur.startsWith("/")?cur:`/files/${r.id}/${cur}`):null;
   if(cur){if(old.tagName!=="IMG"||old.getAttribute("src")!==url)old.replaceWith(el("img",{class:"hero",src:url,alt:""}))}
   else if(r.cover_url){if(old.tagName!=="IMG"||old.getAttribute("src")!==r.cover_url)old.replaceWith(remoteHero(r.cover_url))}
   else if(old.tagName==="IMG")old.replaceWith(el("div",{class:"nohero"},"No cover photo yet"));
   w.querySelectorAll(".hnav").forEach(b=>{b.hidden=pics.length<2});
   const cnt=w.querySelector(".hcount");cnt.hidden=pics.length<2;cnt.textContent=(picIdx+1)+" / "+pics.length;
-  w.querySelector(".hset").hidden=!(cur&&cur!==r.cover);
+  w.querySelector(".hset").hidden=!(cur&&cur!==r.cover&&cur!==r.cover_url);
   const hd=w.querySelector(".hdel");if(hd)hd.hidden=!(cur&&cur.startsWith("shots/"));
   const gal=$("#gal"),gh=$("#galh");
   if(gal){
@@ -805,7 +835,7 @@ $("#coverFile").onchange=e=>{const f=e.target.files[0];e.target.value="";setCove
 $("#coverCam").onchange=e=>{const f=e.target.files[0];e.target.value="";setCover(f)};
 // 3-dot menu on each recipe card; add new options by appending to `items`
 let cm=null;
-function closeMenu(){if(cm){cm.remove();cm=null}}
+function closeMenu(){if(cm){if(cm._for)cm._for.setAttribute("aria-expanded","false");cm.remove();cm=null}}
 function cardMenu(btn,r){
   const same=cm&&cm._for===btn;closeMenu();if(same)return;
   const items=[
@@ -815,9 +845,12 @@ function cardMenu(btn,r){
       if(current&&current.id===r.id){current=null;$("#detail").replaceChildren();if(pushed){pushed=false;history.back()}else history.replaceState(null,"","#");$("#sheet").classList.remove("on");syncSp()}
       toast({kind:"ok",title:"Recipe deleted",text:r.title||"Untitled"});load()}},true]];
   cm=el("div",{class:"cmenu"},items.map(([t,fn,danger,ext])=>el("button",{class:danger?"danger":"",onclick:()=>{closeMenu();fn()}},t,ext?ico(ICO.ext,13):null)));
+  placeMenu(btn);
+}
+function placeMenu(btn,alignRight){
   cm._for=btn;document.body.append(cm);
   const b=btn.getBoundingClientRect(),w=cm.offsetWidth,h=cm.offsetHeight;
-  cm.style.left=Math.max(8,Math.min(b.left,innerWidth-w-8))+"px";
+  cm.style.left=Math.max(8,Math.min(alignRight?b.right-w:b.left,innerWidth-w-8))+"px";
   cm.style.top=(b.bottom+h+8>innerHeight?Math.max(8,b.top-h-4):b.bottom+4)+"px";
 }
 document.addEventListener("click",e=>{if(cm&&!cm.contains(e.target))closeMenu()});
@@ -1022,7 +1055,7 @@ async function jobs(){
       toast({kind:"ok",title:"Recipe saved",text:x.title||host(x.url),action:"Open",onAction:()=>open(x.recipe_id)});
     }else if(x.status==="failed"){
       finished=true;
-      toast({kind:"err",title:"Couldn't read that link",text:(x.error||host(x.url)).slice(0,90),action:x.recipe_id?"View":"",onAction:()=>open(x.recipe_id)});
+      toast({kind:"err",title:x.url?"Couldn't read that link":"Couldn't read that recipe",text:(x.error||host(x.url)).slice(0,90),action:x.recipe_id?"View":"",onAction:()=>open(x.recipe_id)});
     }
   }
   jobsReady=true;
@@ -1242,7 +1275,7 @@ function draw(editing){
         try{
           const res=await api(`/api/recipes/${r.id}/reprocess`,{method:"POST"});
           if(res.status==="exists")toast({title:"Already in your library",text:r.title||host(r.source_url||""),action:"Open",onAction:()=>open(res.recipe_id)});
-          else{seenJobs[res.job]="queued";toast({title:"Retrying",text:"Fetching the link again \u00b7 "+host(r.source_url||"")})}
+          else{seenJobs[res.job]="queued";toast({title:"Retrying",text:r.source_url?"Fetching the link again \u00b7 "+host(r.source_url):r.kind==="photo"?"Reading the photos again":"Reading it again"})}
           close();await jobs();startPoll();
         }catch(err){btn.disabled=false;btn.textContent="Retry";toast({kind:"err",title:"Couldn't retry",text:err.message})}
       }},"Retry"),
@@ -1316,7 +1349,71 @@ $("#file").onchange=async e=>{
   if(ok===n)toast({kind:"ok",title:pl(ok)+" added",text:"Saved to the gallery"});
   else toast({kind:"err",title:ok?`${ok} of ${n} photos added`:"Upload failed",text:"Some photos could not be uploaded"});
 };
-$("#addBtn").onclick=()=>{$("#pasteRow").style.display="none";const r=$("#addRow");r.style.display=r.style.display==="none"?"flex":"none";$("#addUrl").focus()};
+// One Add button: a menu of the ways to add a recipe, each opening its own panel under the header
+const ADD_ICO={
+  link:["M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7","M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"],
+  photo:["M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z","M12 10.5a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"],
+  text:["M5 6h14","M5 10h14","M5 14h10","M5 18h7"],
+  write:["M4 20h4L19 9l-4-4L4 16z","M14 6l4 4"]};
+function hideAdd(){for(const id of["#addRow","#pasteRow","#scanRow"])$(id).style.display="none"}
+function showAdd(id,focus){hideAdd();$(id).style.display="flex";if(focus)$(focus).focus()}
+function addMenu(btn){
+  const same=cm&&cm._for===btn;closeMenu();if(same)return;
+  const items=[["Link",ADD_ICO.link,()=>showAdd("#addRow","#addUrl")],
+    ["Photo of a page",ADD_ICO.photo,()=>showAdd("#scanRow")],
+    ["Paste text",ADD_ICO.text,()=>showAdd("#pasteRow","#pasteBox")],
+    ["Write your own",ADD_ICO.write,writeOwn]];
+  cm=el("div",{class:"cmenu lead",role:"menu","aria-label":"Add a recipe"},
+    items.map(([t,d,fn])=>el("button",{role:"menuitem",onclick:()=>{closeMenu();fn()}},ico(d,20,1.8),t)));
+  btn.setAttribute("aria-expanded","true");placeMenu(btn,true);
+  cm.onkeydown=e=>{const b=[...cm.querySelectorAll("button")],i=b.indexOf(document.activeElement);
+    if(e.key==="ArrowDown"||e.key==="ArrowUp"){e.preventDefault();b[(i+(e.key==="ArrowDown"?1:-1)+b.length)%b.length].focus()}
+    else if(e.key==="Escape")btn.focus()};
+  cm.querySelector("button").focus({preventScroll:true});
+}
+$("#addBtn").onclick=e=>{e.stopPropagation();addMenu(e.currentTarget)};
+$("#addCancel").onclick=()=>{hideAdd();addBox.value="";addBox.oninput()};
+// Photo of a page: up to 4 photos, shrunk in the browser, read by the model on the server
+const MAX_SCAN=4;let scanFiles=[];
+function paintScan(){
+  const box=$("#scanPages");box.querySelectorAll("img").forEach(i=>URL.revokeObjectURL(i.src));
+  box.replaceChildren(...scanFiles.map((f,i)=>el("div",{class:"spage"},
+    el("img",{src:URL.createObjectURL(f),alt:`Page ${i+1}`}),el("b",{},String(i+1)),
+    el("button",{type:"button","aria-label":`Remove page ${i+1}`,title:"Remove",onclick:()=>{scanFiles.splice(i,1);paintScan()}},ico("M6 6l12 12M18 6L6 18",14,2.4)))));
+  const full=scanFiles.length>=MAX_SCAN;
+  $("#scanGo").disabled=!scanFiles.length;$("#scanCam").disabled=full;$("#scanPick").disabled=full;
+  $("#scanHint").textContent=full?`That’s the most for one recipe (${MAX_SCAN} photos).`:
+    "Up to 4 photos, in page order. Hold the phone straight over the page, fill the frame and use good light.";
+}
+function addScan(list){
+  const ok=[...list].filter(f=>f.type.startsWith("image/")||/\.(heic|heif)$/i.test(f.name)),room=MAX_SCAN-scanFiles.length;
+  if(ok.length>room)toast({kind:"err",title:`Up to ${MAX_SCAN} photos`,text:`Only the first ${room} were added`});
+  scanFiles.push(...ok.slice(0,room));paintScan();
+}
+function resetScan(){scanFiles=[];paintScan();$("#scanNote").value=""}
+$("#scanCam").onclick=()=>$("#scanCamIn").click();
+$("#scanPick").onclick=()=>$("#scanFileIn").click();
+for(const id of["#scanCamIn","#scanFileIn"])$(id).onchange=e=>{addScan(e.target.files);e.target.value=""};
+$("#scanCancel").onclick=()=>{resetScan();hideAdd()};
+$("#scanGo").onclick=async()=>{
+  if(!scanFiles.length)return;
+  const btn=$("#scanGo");btn.disabled=true;btn.textContent="Uploading…";
+  try{
+    const fd=new FormData();
+    for(const f of scanFiles){const{blob,name}=await prepImage(f,2400);fd.append("files",blob,name)}
+    fd.append("note",$("#scanNote").value.trim());
+    let r;
+    try{r=await fetch("/api/ui/photo",{method:"POST",body:fd})}catch(e){if(navigator.onLine)expired();throw e}
+    if(r.status===401||r.status===403){expired();throw new Error("Session expired")}
+    if(!r.ok){let m=await r.text();try{m=JSON.parse(m).detail||m}catch{}throw new Error(String(m).slice(0,200))}
+    const res=await r.json();
+    resetScan();hideAdd();
+    if(res.status==="exists")toast({title:"Already in your library",text:"Those photos were scanned before",action:"Open",onAction:()=>open(res.recipe_id)});
+    else{seenJobs[res.job]="queued";toast({title:"Photos received",text:"Reading the page…"});scrollTo({top:0,behavior:"smooth"});$("#left").scrollTo({top:0,behavior:"smooth"})}
+    await jobs();startPoll();
+  }catch(e){toast({kind:"err",title:"Couldn’t add those photos",text:e.message})}
+  finally{btn.textContent="Save";btn.disabled=!scanFiles.length}
+};
 const addBox=$("#addUrl"),NL=String.fromCharCode(10);
 addBox.oninput=()=>{addBox.style.height="auto";addBox.style.height=Math.min(addBox.scrollHeight,180)+"px"};
 addBox.onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey&&!addBox.value.trim().includes(NL)){e.preventDefault();$("#addGo").click()}};
@@ -1342,13 +1439,12 @@ $("#addGo").onclick=async()=>{
   }catch(e){toast({kind:"err",title:"Couldn't add that link",text:e.message})}
   finally{btn.disabled=false;btn.textContent="Save"}
 };
-$("#addManual").onclick=async()=>{
+async function writeOwn(){
   try{const res=await api("/api/ui/manual",{method:"POST",body:JSON.stringify({})});
-    $("#addRow").style.display="none";await open(res.id,true)}
+    hideAdd();await open(res.id,true)}
   catch(e){toast({kind:"err",title:"Couldn\u2019t start a new recipe",text:e.message})}
-};
+}
 const pasteBox=$("#pasteBox");
-$("#addPaste").onclick=()=>{$("#addRow").style.display="none";$("#pasteRow").style.display="flex";pasteBox.focus()};
 $("#pasteCancel").onclick=()=>{$("#pasteRow").style.display="none";pasteBox.value=""};
 $("#pasteGo").onclick=async()=>{
   const t=pasteBox.value.trim();if(!t)return;

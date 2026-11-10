@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 import requests
-from fastapi import Body, FastAPI, File, Header, HTTPException, Query, UploadFile
+from fastapi import Body, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
 import fetch
@@ -42,7 +42,7 @@ def _load_key():
 
 KEY = _load_key()
 MEALS = ["Breakfast", "Lunch", "Dinner", "Snack", "Dessert", "Other"]
-IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
+IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 SERVE_EXT = IMG_EXT | {".mp4", ".html", ".txt", ".vtt"}
 URL_RE = re.compile(r"https?://[^\s\"'<>]+")
 # a pasted link without the scheme ("www.tiktok.com/@a/video/1"): needs www. or a path so plain words with dots do not match
@@ -72,7 +72,7 @@ LIVE: dict = {}  # job id -> {"stage": str, "dir": recipe folder name or None}
 STAGES = {  # key -> (percent, label shown in the UI)
     "queued": (0, "Waiting in line"), "fetching": (12, "Fetching the link"),
     "reading": (45, "Reading the page"), "transcribing": (35, "Listening to the video"),
-    "scanning": (60, "Reading the screen"), "writing": (80, "Writing the recipe"),
+    "scanning": (60, "Reading the screen"), "ocr": (50, "Reading the photos"), "writing": (80, "Writing the recipe"),
     "finishing": (95, "Final touches"), "starting": (20, "Getting started"),
     "waiting": (30, "Waiting for the AI queue"),
 }
@@ -151,12 +151,13 @@ def text_hash(text):
 
 def write_stub(d: Path, url: str, err: str):
     fx = json.loads((d / "fetch.json").read_text(encoding="utf-8")) if (d / "fetch.json").exists() else {}
-    is_text = fx.get("kind") == "text"
+    is_text, is_photo = fx.get("kind") == "text", fx.get("kind") == "photo"
     save(d, {"title": fx.get("yt_title") or fx.get("page_title") or url or "Untitled", "meal": "Other",
              "servings": None, "ingredients": [], "steps": [], "source_url": fx.get("source_url", url),
              "kind": fx.get("kind", "video"),
-             "source_note": "Pasted recipe" if is_text else None,
+             "source_note": "Pasted recipe" if is_text else (fx.get("source_note") or "Scanned from a photo") if is_photo else None,
              "paste_hash": text_hash(fx["pasted_text"]) if is_text else None,
+             "photo_hash": fx.get("photo_hash") if is_photo else None,
              "cover": "thumbnail.jpg" if (d / "thumbnail.jpg").exists() else None,
              "cover_url": None if (d / "thumbnail.jpg").exists() else fx.get("cover_url"),
              "has_video": (d / "source.mp4").exists(),
@@ -211,8 +212,9 @@ def run_job(job):
                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800,
                            env={**os.environ, "PYTHONUTF8": "1"})  # Windows default codec is cp1252
         if not (d / "recipe.json").exists():
-            raise RuntimeError((p.stdout + p.stderr).strip().splitlines()[-1][:200] if (p.stdout + p.stderr).strip()
-                               else "processing produced nothing")
+            out = (p.stdout + p.stderr).strip()
+            last = out.splitlines()[-1].replace(f"FAIL {d} ", "", 1) if out else ""  # the folder path is noise
+            raise RuntimeError(last[:200] or "processing produced nothing")
         if keep_user:
             r = load(d)
             r.update(keep_user)
@@ -344,6 +346,41 @@ def ui_paste(body: dict = Body(...)):
     return enqueue_text(body.get("text", ""), body.get("meal"))
 
 
+MAX_PAGES, MAX_IMG = 4, 15 * 1024 * 1024
+
+
+@app.post("/api/ui/photo")  # photos of a cookbook or magazine page: the model reads the text, then structures it
+def ui_photo(files: list[UploadFile] = File(...), note: str = Form(""), meal: str = Form("")):
+    throttle()
+    if not files:
+        raise HTTPException(400, "add a photo of the recipe")
+    if len(files) > MAX_PAGES:
+        raise HTTPException(400, f"up to {MAX_PAGES} photos per recipe")
+    blobs = []
+    for f in files:
+        if Path(f.filename or "").suffix.lower() not in IMG_EXT and not (f.content_type or "").startswith("image/"):
+            raise HTTPException(400, "photos only")
+        data = f.file.read(MAX_IMG + 1)
+        if len(data) > MAX_IMG:
+            raise HTTPException(413, "a photo is larger than 15 MB")
+        blobs.append(data)
+    h = fetch.photo_hash(blobs)
+    for d in RECIPES.glob(f"*_scan_{h[:10]}"):
+        if (d / "recipe.json").exists():
+            return {"status": "exists", "recipe_id": d.name}
+        j = q("SELECT id FROM jobs WHERE recipe_id=? AND status IN ('queued','running')", d.name).fetchone()
+        if j:
+            return {"status": "queued", "job": j["id"]}
+    try:
+        d = fetch.fetch_photos(blobs, re.sub(r"\s+", " ", note).strip()[:120])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    meal = next((x for x in MEALS if x.lower() == meal.strip().lower()), None)
+    cur = q("INSERT INTO jobs(url,meal,recipe_id,user,status,created,updated) VALUES(?,?,?,?,?,?,?)",
+            "", meal, d.name, None, "queued", time.time(), time.time())
+    return {"status": "queued", "job": cur.lastrowid}
+
+
 @app.post("/api/ui/add-many")  # bulk: one link per line, one throttle hit for the whole paste
 def ui_add_many(body: dict = Body(...)):
     throttle()
@@ -381,6 +418,8 @@ def _preview(name):
         pass
     if (d / "thumbnail.jpg").exists():
         out["thumb"] = f"/files/{name}/thumbnail.jpg"
+    elif (d / "shots" / "page_1.jpg").exists():  # scanned recipe
+        out["thumb"] = f"/files/{name}/shots/page_1.jpg"
     return out
 
 
@@ -608,8 +647,8 @@ def delete(rid: str):
 def reprocess(rid: str):
     d = rdir(rid)
     r = load(d)
-    if r.get("kind") == "text":
-        # pasted recipe: fetch.json already holds the text, just re-run the model on it
+    if r.get("kind") in ("text", "photo"):
+        # pasted recipe or scanned pages: everything is already on disk, just re-run the model on it
         cur = q("INSERT INTO jobs(url,meal,recipe_id,user,status,created,updated) VALUES(?,?,?,?,?,?,?)",
                 "", None, d.name, None, "queued", time.time(), time.time())
         return {"status": "queued", "job": cur.lastrowid}
@@ -680,7 +719,7 @@ def files(rid: str, path: str):
     return FileResponse(f, headers=h)
 
 
-ICON_FILES = {"icon.svg", "apple-touch-icon.png", "icon-192.png", "icon-512.png"}
+ICON_FILES = {"icon.svg", "apple-touch-icon.png", "icon-192.png", "icon-512.png", "scan-cover.svg"}
 
 
 @app.get("/icons/{name}")
