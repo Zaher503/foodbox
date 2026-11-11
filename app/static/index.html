@@ -14,6 +14,8 @@
 <style>
 :root{--bg:#fafaf7;--card:#fff;--ink:#1d1d1b;--mute:#76766f;--line:#e6e4dd;--acc:#c2410c;--warn:#b45309;--warnbg:#fef3c7;--s1:#fff1e6;--s2:#e4ecf6}
 *{box-sizing:border-box}
+/* no double-tap zoom (and no tap delay); pinch-zoom still works */
+html{touch-action:manipulation}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-text-size-adjust:100%}
 button,input,select,textarea{font:inherit;color:inherit}
 header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 16px 0;padding-top:max(10px,env(safe-area-inset-top))}
