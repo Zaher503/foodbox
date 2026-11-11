@@ -433,6 +433,18 @@ html table.ing tr:last-child td{border-bottom:0}
 html table.ing td.am{width:5.5em;font-weight:600;font-variant-numeric:tabular-nums;padding-right:12px;white-space:nowrap}
 html table.ing td.tx{border-left:0;padding-left:0}
 html table.ing td.cb{width:34px}
+table.ing td.dh{width:30px;padding:0 4px 0 0;vertical-align:middle}
+html table.ing tr.hd td.dh{padding-top:8px}
+.grip{display:grid;place-items:center;width:30px;height:40px;margin-left:-8px;border:0;border-radius:8px;background:none;color:var(--mute);cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none;padding:0}
+.grip:hover{color:var(--ink);background:var(--fill)}
+.grip:focus-visible{outline:2px solid var(--acc);outline-offset:-2px;color:var(--ink)}
+html.rowdrag,html.rowdrag *{cursor:grabbing!important;-webkit-user-select:none;user-select:none}
+table.ing tr{position:relative}
+table.ing tr.dragging{position:relative;z-index:2}
+table.ing tr.dragging td{background:color-mix(in srgb,var(--acc) 14%,var(--card));border-bottom-color:transparent}
+table.ing tr.dragging td:first-child{border-radius:10px 0 0 10px}
+table.ing tr.dragging td:last-child{border-radius:0 10px 10px 0}
+table.ing tr.dragging .grip{color:var(--acc)}
 html table.ing input[type=checkbox]{width:22px;height:22px;accent-color:var(--accf)}
 html ol.st li{background:none!important;border-radius:0;margin:0 0 16px;padding:2px 0 2px 42px;min-height:28px;font-size:16px;line-height:1.5}
 html ol.st.num li::before{background:var(--accf);color:#fff;width:28px;height:28px;border-radius:50%;left:0;top:0;transform:none;font-size:14px;font-weight:600;justify-content:center}
@@ -1054,17 +1066,71 @@ function listKeys(e,row,mk,focus,empty){
     else if(ev.key==="Backspace"&&empty()&&row.parentNode.children.length>1){ev.preventDefault();const p=row.previousElementSibling||row.nextElementSibling;row.remove();focus(p)}
   };
 }
+// Drag to reorder ingredient rows (headings too, so ingredients can be regrouped under them).
+// Pointer events work for mouse, touch and pen; the grip also moves its row with the arrow keys.
+const GRIP=(()=>{const n="http://www.w3.org/2000/svg",v=document.createElementNS(n,"svg");v.setAttribute("viewBox","0 0 10 16");v.setAttribute("width","10");v.setAttribute("height","16");v.setAttribute("aria-hidden","true");
+  for(const y of[3,8,13])for(const x of[2.5,7.5]){const c=document.createElementNS(n,"circle");c.setAttribute("cx",x);c.setAttribute("cy",y);c.setAttribute("r","1.5");c.setAttribute("fill","currentColor");v.append(c)}return v})();
+function gripCell(name){
+  const b=el("button",{type:"button",class:"grip",title:"Drag to reorder"},GRIP.cloneNode(true));
+  b.onfocus=b.onpointerenter=()=>b.setAttribute("aria-label","Reorder "+(name()||"row")+". Use the up and down arrow keys");
+  b.onpointerdown=e=>{if(e.button===0)dragRow(b.closest("tr"),e)};
+  b.onkeydown=e=>{
+    const tr=b.closest("tr");
+    if(e.key==="ArrowUp"&&tr.previousElementSibling){e.preventDefault();flipMove(tr,()=>tr.previousElementSibling.before(tr));b.focus()}
+    else if(e.key==="ArrowDown"&&tr.nextElementSibling){e.preventDefault();flipMove(tr,()=>tr.nextElementSibling.after(tr));b.focus()}
+  };
+  return el("td",{class:"dh"},b);
+}
+// move rows, then slide every row from where it was to where it is now
+function flipMove(tr,move){
+  const rows=[...tr.parentNode.children],before=new Map(rows.map(r=>[r,r.getBoundingClientRect().top]));
+  move();
+  if(matchMedia("(prefers-reduced-motion:reduce)").matches)return;
+  for(const r of rows){const dy=before.get(r)-r.getBoundingClientRect().top;if(!dy||r.classList.contains("dragging"))continue;
+    r.style.transition="none";r.style.transform=`translateY(${dy}px)`;r.getBoundingClientRect();
+    r.style.transition="transform .16s ease";r.style.transform=""}
+}
+function dragRow(tr,e){
+  e.preventDefault();
+  const body=tr.parentNode,grip=e.currentTarget||tr.querySelector(".grip");
+  let scroller=tr.parentElement;while(scroller&&scroller!==document.body&&!/(auto|scroll)/.test(getComputedStyle(scroller).overflowY))scroller=scroller.parentElement;
+  if(!scroller||scroller===document.body)scroller=document.scrollingElement;
+  let y=e.clientY,raf=0,start=[...body.children].indexOf(tr);
+  try{grip.setPointerCapture(e.pointerId)}catch{}
+  document.activeElement?.blur?.();
+  tr.classList.add("dragging");document.documentElement.classList.add("rowdrag");
+  if(navigator.vibrate)navigator.vibrate(8);
+  // middle of a row where it sits in the layout, ignoring the slide animation still running on it
+  const mid=r=>{const b=r.getBoundingClientRect();let dy=0;try{dy=new DOMMatrix(getComputedStyle(r).transform).m42}catch{}return b.top-dy+b.height/2};
+  const place=()=>{
+    const p=tr.previousElementSibling,n=tr.nextElementSibling;
+    if(p&&y<mid(p)){flipMove(tr,()=>p.before(tr));return place()}
+    if(n&&y>mid(n)){flipMove(tr,()=>n.after(tr));return place()}
+  };
+  const edge=()=>{  // keep scrolling while the finger rests near the top or bottom of the sheet
+    const r=scroller===document.scrollingElement?{top:0,bottom:innerHeight}:scroller.getBoundingClientRect(),z=70;
+    const d=y<r.top+z?-(r.top+z-y):y>r.bottom-z?y-(r.bottom-z):0;
+    if(d){scroller.scrollTop+=Math.max(-18,Math.min(18,d/4));place()}
+    raf=requestAnimationFrame(edge);
+  };
+  const move=ev=>{y=ev.clientY;place()};
+  const end=()=>{cancelAnimationFrame(raf);grip.removeEventListener("pointermove",move);grip.removeEventListener("pointerup",end);grip.removeEventListener("pointercancel",end);
+    tr.classList.remove("dragging");document.documentElement.classList.remove("rowdrag");
+    if([...body.children].indexOf(tr)!==start&&navigator.vibrate)navigator.vibrate(5)};
+  grip.addEventListener("pointermove",move);grip.addEventListener("pointerup",end);grip.addEventListener("pointercancel",end);
+  raf=requestAnimationFrame(edge);
+}
 function ingRow(line){
   if(isHd(line)){
     const e=ce(hdText(line),"Heading, e.g. For the sauce");
-    const tr=el("tr",{class:"hd"},el("td",{class:"cb"},el("button",{type:"button",class:"rm","aria-label":"Remove",onclick:()=>tr.remove()},"×")),el("td",{colspan:"2"},e));
+    const tr=el("tr",{class:"hd"},gripCell(()=>"heading "+ceVal(e)),el("td",{class:"cb"},el("button",{type:"button",class:"rm","aria-label":"Remove",onclick:()=>tr.remove()},"×")),el("td",{colspan:"2"},e));
     listKeys(e,tr,ingRow,n=>n.querySelector(".ce").focus(),()=>!e.textContent);
     tr.getVal=()=>{const v=ceVal(e);return v?"## "+v:""};
     return tr;
   }
   const sp=ingSplit(line,1,false).map(n=>n.map(x=>typeof x==="string"?x:x.textContent).join(""));
   const am=ce(sp[0],"amount"),tx=ce(sp[1],"ingredient");
-  const tr=el("tr",{},el("td",{class:"cb"},el("button",{type:"button",class:"rm","aria-label":"Remove",onclick:()=>tr.remove()},"×")),el("td",{class:"am"},am),el("td",{class:"tx"},tx));
+  const tr=el("tr",{},gripCell(()=>(ceVal(am)+" "+ceVal(tx)).trim()),el("td",{class:"cb"},el("button",{type:"button",class:"rm","aria-label":"Remove",onclick:()=>tr.remove()},"×")),el("td",{class:"am"},am),el("td",{class:"tx"},tx));
   for(const e of[am,tx])listKeys(e,tr,ingRow,n=>n.querySelector(".am .ce").focus(),()=>!am.textContent&&!tx.textContent);
   tr.getVal=()=>(ceVal(am)+" "+ceVal(tx)).trim();
   return tr;
