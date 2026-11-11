@@ -262,6 +262,11 @@ a{color:var(--acc)}
 .flaginfo[hidden]{display:none}
 table.ing tr.needck td{background:color-mix(in srgb,var(--warn) 20%,transparent)}
 ol.st li.needck{outline:2px solid var(--warn);outline-offset:-2px}
+ol.st:not(.edit) li:not(.hd){cursor:pointer;-webkit-tap-highlight-color:transparent}
+ol.st:not(.edit) li:not(.hd):focus-visible{outline:2px solid var(--acc);outline-offset:4px;border-radius:8px}
+ol.st li.done{color:var(--mute);text-decoration:line-through;text-decoration-color:color-mix(in srgb,var(--mute) 70%,transparent)}
+ol.st li.done .rlink{color:inherit}
+html ol.st.num li.done::before{content:"\2713";background:var(--fill2,#ccc);color:var(--mute)}
 .flagnote{font-size:12px;color:var(--warn);margin-top:2px}
 
 *{scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--mute) 35%,transparent) transparent}
@@ -1046,7 +1051,11 @@ async function discardDraft(){
   try{await api("/api/recipes/"+id,{method:"DELETE"})}catch{}
   close();
 }
+// crossed-out direction steps: kept only while this recipe stays open (also across Edit), cleared on leaving it
+let doneSteps={id:null,set:new Set()};
+function stepsDone(id){if(doneSteps.id!==id)doneSteps={id,set:new Set()};return doneSteps.set}
 function closeUI(){
+  doneSteps={id:null,set:new Set()};
   if(current&&current.draft)api("/api/recipes/"+current.id,{method:"DELETE"}).catch(()=>{});
   current=null;$("#detail").replaceChildren();$("#sheet").classList.remove("on");syncSp();
   load();
@@ -1193,7 +1202,13 @@ function draw(editing){
     ol.className="st "+(numbered?"num":"plain");
     ol.replaceChildren(...(r.steps||[]).map((st,ix)=>{const fl=flagsOn?FL.steps.get(ix):null;
       if(isHd(st))return el("li",{class:"hd"},hdText(st));
-      return el("li",{class:fl?"needck":""},...linkNodes(tempText(st,metric)),fl?el("div",{class:"flagnote"},"\u26a0 "+fl):null)}));
+      const done=stepsDone(r.id),on=done.has(st);
+      const li=el("li",{class:(fl?"needck ":"")+(on?"done":""),role:"checkbox","aria-checked":String(on),tabindex:"0",title:"Tap to cross out"},
+        ...linkNodes(tempText(st,metric)),fl?el("div",{class:"flagnote"},"\u26a0 "+fl):null);
+      const flip=()=>{done.has(st)?done.delete(st):done.add(st);li.classList.toggle("done",done.has(st));li.setAttribute("aria-checked",String(done.has(st)))};
+      li.onclick=e=>{if(!e.target.closest("a")&&!getSelection().toString())flip()};
+      li.onkeydown=e=>{if((e.key===" "||e.key==="Enter")&&e.target===li){e.preventDefault();flip()}};
+      return li}));
     servEl.replaceChildren(...(r.servings?["Serves ",...scaleText(r.servings,mult)]
       :r.servings_num?["Serves "+fmt(r.servings_num*mult)+(r.servings_inferred?" (estimated)":"")]:[]));
   };
