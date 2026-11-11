@@ -445,6 +445,14 @@ table.ing tr.dragging td{background:color-mix(in srgb,var(--acc) 14%,var(--card)
 table.ing tr.dragging td:first-child{border-radius:10px 0 0 10px}
 table.ing tr.dragging td:last-child{border-radius:0 10px 10px 0}
 table.ing tr.dragging .grip{color:var(--acc)}
+ol.st:not(.edit) .grip{display:none}
+ol.st.edit .grip{position:absolute;left:0;top:-6px;margin:0}
+html ol.st.edit li{padding-left:72px}
+html ol.st.edit.num li::before{left:32px}
+html ol.st.edit.plain li,html ol.st.edit li.hd{padding-left:34px}
+html ol.st.edit li.hd .grip{top:8px}
+html ol.st li.dragging{background:color-mix(in srgb,var(--acc) 14%,var(--card))!important;border-radius:10px;z-index:2}
+ol.st li.dragging .grip{color:var(--acc)}
 html table.ing input[type=checkbox]{width:22px;height:22px;accent-color:var(--accf)}
 html ol.st li{background:none!important;border-radius:0;margin:0 0 16px;padding:2px 0 2px 42px;min-height:28px;font-size:16px;line-height:1.5}
 html ol.st.num li::before{background:var(--accf);color:#fff;width:28px;height:28px;border-radius:50%;left:0;top:0;transform:none;font-size:14px;font-weight:600;justify-content:center}
@@ -1070,17 +1078,18 @@ function listKeys(e,row,mk,focus,empty){
 // Pointer events work for mouse, touch and pen; the grip also moves its row with the arrow keys.
 const GRIP=(()=>{const n="http://www.w3.org/2000/svg",v=document.createElementNS(n,"svg");v.setAttribute("viewBox","0 0 10 16");v.setAttribute("width","10");v.setAttribute("height","16");v.setAttribute("aria-hidden","true");
   for(const y of[3,8,13])for(const x of[2.5,7.5]){const c=document.createElementNS(n,"circle");c.setAttribute("cx",x);c.setAttribute("cy",y);c.setAttribute("r","1.5");c.setAttribute("fill","currentColor");v.append(c)}return v})();
-function gripCell(name){
+function grip(name){  // works for ingredient rows (tr) and direction steps (li)
   const b=el("button",{type:"button",class:"grip",title:"Drag to reorder"},GRIP.cloneNode(true));
   b.onfocus=b.onpointerenter=()=>b.setAttribute("aria-label","Reorder "+(name()||"row")+". Use the up and down arrow keys");
-  b.onpointerdown=e=>{if(e.button===0)dragRow(b.closest("tr"),e)};
+  b.onpointerdown=e=>{if(e.button===0)dragRow(b.closest("tr,li"),e)};
   b.onkeydown=e=>{
-    const tr=b.closest("tr");
+    const tr=b.closest("tr,li");
     if(e.key==="ArrowUp"&&tr.previousElementSibling){e.preventDefault();flipMove(tr,()=>tr.previousElementSibling.before(tr));b.focus()}
     else if(e.key==="ArrowDown"&&tr.nextElementSibling){e.preventDefault();flipMove(tr,()=>tr.nextElementSibling.after(tr));b.focus()}
   };
-  return el("td",{class:"dh"},b);
+  return b;
 }
+const gripCell=name=>el("td",{class:"dh"},grip(name));
 // move rows, then slide every row from where it was to where it is now
 function flipMove(tr,move){
   const rows=[...tr.parentNode.children],before=new Map(rows.map(r=>[r,r.getBoundingClientRect().top]));
@@ -1137,7 +1146,7 @@ function ingRow(line){
 }
 function stepRow(txt){
   const hd=isHd(txt),e=ce(hd?hdText(txt):showLinks(txt),hd?"Heading, e.g. For the sauce":"step");
-  const li=el("li",{class:hd?"hd":""},e,el("button",{type:"button",class:"rm srm","aria-label":"Remove step",onclick:()=>li.remove()},"×"));
+  const li=el("li",{class:hd?"hd":""},grip(()=>(hd?"heading ":"step ")+ceVal(e).slice(0,40)),e,el("button",{type:"button",class:"rm srm","aria-label":"Remove step",onclick:()=>li.remove()},"×"));
   listKeys(e,li,stepRow,n=>n.querySelector(".ce").focus(),()=>!e.textContent);
   li.getVal=()=>{const v=hideLinks(ceVal(e));return v&&hd?"## "+v:v};
   return li;
