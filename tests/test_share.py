@@ -58,6 +58,27 @@ def test_share_flow(ctx):
     assert c.get(f"/s/{tok}/cover").status_code == 404
 
 
+def test_share_view_has_no_delete_or_saved_source(ctx):
+    """The shared page keeps the Source link but never offers Delete or the saved copy of the source."""
+    c, rid = ctx
+    d = sys.modules["main"].RECIPES / rid
+    (d / "page.html").write_text("<p>saved copy</p>", encoding="utf-8")
+    (d / "source.mp4").write_bytes(b"fake")
+    tok = c.post(f"/api/recipes/{rid}/share").json()["token"]
+    try:
+        data = c.get(f"/s/{tok}/recipe").json()
+        assert data["source_url"] == "https://example.com/soup"  # the original link stays
+        for k in ("id", "has_page", "has_video", "photos", "thumbs"):  # nothing that points at the saved files
+            assert k not in data
+        for p in ("page.html", "source.mp4", "page.txt", "recipe.json", "shots/user_1.jpg"):
+            assert c.get(f"/s/{tok}/{p}").status_code == 404
+        page = "".join(open(os.path.join(APP, "static", f), encoding="utf-8").read() for f in ("share.html", "share.js"))
+        for bad in ("/files/", "/api/", "Saved page", "page.html", "method:", "DELETE", "Delete"):
+            assert bad not in page, bad
+    finally:
+        c.delete(f"/api/recipes/{rid}/share")
+
+
 def test_bad_tokens(ctx):
     c, _ = ctx
     for t in ("short", "../../etc/passwd", "a" * 100):
