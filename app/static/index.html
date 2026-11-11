@@ -430,6 +430,10 @@ html .times.cards span{display:block;font-size:12px;color:var(--mute)}
 html .times.cards b{font:600 18px var(--display)}
 html h2{font:600 20px var(--display);letter-spacing:-.01em;text-transform:none;color:var(--ink);margin:26px 0 12px}
 html .scaler{font-size:15px}
+.resetb{display:inline-flex;align-items:center;gap:5px;border:0;background:none;color:var(--mute);font:inherit;font-size:14px;padding:6px 8px;margin:0 -8px 0 4px;border-radius:8px;cursor:pointer;min-height:32px}
+.resetb[hidden]{display:none}
+.resetb:hover{color:var(--acc);background:var(--fill)}
+.resetb:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
 html .stepper{border:0;background:var(--fill);border-radius:10px}
 html table.ing{background:var(--card);box-shadow:0 0 0 1px var(--line);border-radius:14px;border-collapse:separate;border-spacing:0;padding:0 16px;display:block}
 html table.ing tbody{display:table;width:100%}
@@ -1051,11 +1055,10 @@ async function discardDraft(){
   try{await api("/api/recipes/"+id,{method:"DELETE"})}catch{}
   close();
 }
-// crossed-out direction steps: kept only while this recipe stays open (also across Edit), cleared on leaving it
-let doneSteps={id:null,set:new Set()};
-function stepsDone(id){if(doneSteps.id!==id)doneSteps={id,set:new Set()};return doneSteps.set}
+// crossed-out direction steps, saved per recipe in this browser like ticked ingredients ("have:<id>"); Reset clears both
+const doneKey=id=>"done:"+id,haveKey=id=>"have:"+id;
+const readSet=k=>{try{return new Set(JSON.parse(store.get(k)||"[]"))}catch{return new Set()}};
 function closeUI(){
-  doneSteps={id:null,set:new Set()};
   if(current&&current.draft)api("/api/recipes/"+current.id,{method:"DELETE"}).catch(()=>{});
   current=null;$("#detail").replaceChildren();$("#sheet").classList.remove("on");syncSp();
   load();
@@ -1197,21 +1200,30 @@ function draw(editing){
       const fl=flagsOn?FL.ing.get(ix):null;
       const tr=el("tr",{class:(cb.checked?"have":"")+(fl?" needck":"")},el("td",{class:"cb"},cb),el("td",{class:"am"},sp[0]),el("td",{class:"tx"},sp[1],fl?el("div",{class:"flagnote"},"\u26a0 "+fl):null));
       cb.onchange=()=>{let h=[];try{h=JSON.parse(store.get(k)||"[]")}catch{}
-        h=h.filter(x=>x!==i);if(cb.checked)h.push(i);store.set(k,JSON.stringify(h));tr.classList.toggle("have",cb.checked)};
+        h=h.filter(x=>x!==i);if(cb.checked)h.push(i);store.set(k,JSON.stringify(h));tr.classList.toggle("have",cb.checked);syncReset()};
       return tr}));
     ol.className="st "+(numbered?"num":"plain");
     ol.replaceChildren(...(r.steps||[]).map((st,ix)=>{const fl=flagsOn?FL.steps.get(ix):null;
       if(isHd(st))return el("li",{class:"hd"},hdText(st));
-      const done=stepsDone(r.id),on=done.has(st);
+      const done=readSet(doneKey(r.id)),on=done.has(st);
       const li=el("li",{class:(fl?"needck ":"")+(on?"done":""),role:"checkbox","aria-checked":String(on),tabindex:"0",title:"Tap to cross out"},
         ...linkNodes(tempText(st,metric)),fl?el("div",{class:"flagnote"},"\u26a0 "+fl):null);
-      const flip=()=>{done.has(st)?done.delete(st):done.add(st);li.classList.toggle("done",done.has(st));li.setAttribute("aria-checked",String(done.has(st)))};
+      const flip=()=>{const d=readSet(doneKey(r.id));d.has(st)?d.delete(st):d.add(st);store.set(doneKey(r.id),JSON.stringify([...d]));
+        li.classList.toggle("done",d.has(st));li.setAttribute("aria-checked",String(d.has(st)));syncReset()};
       li.onclick=e=>{if(!e.target.closest("a")&&!getSelection().toString())flip()};
       li.onkeydown=e=>{if((e.key===" "||e.key==="Enter")&&e.target===li){e.preventDefault();flip()}};
       return li}));
     servEl.replaceChildren(...(r.servings?["Serves ",...scaleText(r.servings,mult)]
       :r.servings_num?["Serves "+fmt(r.servings_num*mult)+(r.servings_inferred?" (estimated)":"")]:[]));
+    syncReset();
   };
+  // Reset: un-strike every ingredient and step of this recipe (shown only when something is crossed out), with Undo
+  const resetBtn=el("button",{type:"button",class:"resetb",hidden:true,title:"Un-strike all ingredients and steps",onclick:()=>{
+    const saved=[store.get(haveKey(r.id)),store.get(doneKey(r.id))];
+    store.set(haveKey(r.id),"[]");store.set(doneKey(r.id),"[]");paint();
+    toast({title:"Crossed-out items cleared",action:"Undo",onAction:()=>{store.set(haveKey(r.id),saved[0]||"[]");store.set(doneKey(r.id),saved[1]||"[]");if(current&&current.id===r.id)paint()}});
+  }},ico(["M3 12a9 9 0 1 0 3-6.7","M3 4v5h5"],14),"Reset");
+  function syncReset(){resetBtn.hidden=editing||!(ul.querySelector("tr.have")||ol.querySelector("li.done"))}
   const inp=el("input",{type:"number",inputmode:"decimal",step:"any",min:"0.25",max:"100",value:"1","aria-label":"Recipe multiplier"});
   inp.oninput=()=>{const v=parseFloat(inp.value);if(v>0&&v<=100){mult=v;paint()}};
   const step=dir=>{let v=parseFloat(inp.value);if(!(v>0))v=1;
@@ -1221,7 +1233,7 @@ function draw(editing){
   mcb.onchange=()=>{metric=mcb.checked;store.set("metric",metric?"1":"0");paint()};
   const scaler=el("div",{class:"scaler"},"Scale",el("div",{class:"stepper"},inp,el("div",{class:"arrows"},
     el("button",{type:"button","aria-label":"Increase",onclick:()=>step(1)},"▲"),
-    el("button",{type:"button","aria-label":"Decrease",onclick:()=>step(-1)},"▼"))),"× recipe",el("label",{class:"chk"},mcb,"Metric"));
+    el("button",{type:"button","aria-label":"Decrease",onclick:()=>step(-1)},"▼"))),"× recipe",el("label",{class:"chk"},mcb,"Metric"),resetBtn);
   if(editing)scaler.classList.add("off");
   paint();
   kids.push(editing?E.h1:el("h1",{},r.title||"Untitled"));
