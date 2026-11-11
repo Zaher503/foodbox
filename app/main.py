@@ -673,7 +673,7 @@ SHARE_FIELDS = ("title", "meal", "servings", "servings_num", "servings_inferred"
                 "prep_min", "cook_min", "total_min", "active_min", "nutrition", "tags", "source_url", "source_note", "kind")
 SHARE_HDR = {"Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow", "Referrer-Policy": "no-referrer",
              "X-Content-Type-Options": "nosniff"}
-SHARE_ASSETS = {"share.js": "text/javascript", "kit.js": "text/javascript", "icon.svg": "image/svg+xml"}
+SHARE_ASSETS = {"share.js": "text/javascript", "share-theme.js": "text/javascript", "kit.js": "text/javascript", "icon.svg": "image/svg+xml"}
 
 
 def by_share(token: str) -> Path:

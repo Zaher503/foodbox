@@ -46,6 +46,7 @@ def test_share_flow(ctx):
     assert c.get(f"/s/{tok}/cover").status_code == 200
     assert c.get("/s/assets/kit.js").status_code == 200
     assert c.get("/s/assets/share.js").status_code == 200
+    assert c.get("/s/assets/share-theme.js").status_code == 200
     assert c.get("/s/assets/main.py").status_code == 404
 
     # the public routes are read-only
