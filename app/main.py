@@ -204,7 +204,7 @@ def run_job(job):
         if job["recipe_id"]:
             try:
                 old = json.loads((d / "recipe.json").read_text(encoding="utf-8"))
-                keep_user = {k: old[k] for k in ("favorite", "notes", "tags", "added_by") if k in old}
+                keep_user = {k: old[k] for k in ("favorite", "notes", "tags", "added_by", "share_token") if k in old}
             except Exception:
                 pass
             (d / "recipe.json").unlink(missing_ok=True)
@@ -662,6 +662,98 @@ def reprocess(rid: str):
             shutil.move(str(dest), str(d))
             raise
     return enqueue(r["source_url"], recipe_id=d.name)
+
+
+# ---------- public share links ----------
+# /s/<token> is the only part of the app reachable without Authentik (Caddy lets GET /s/* through).
+# Everything under it is read-only: GET routes only, and the JSON leaves out personal fields.
+SHARE_RE = re.compile(r"[A-Za-z0-9_-]{16,64}")
+RECIPE_LINK = re.compile(r"\[\[([^\]|]+)\|[\w.\-]+\]\]")  # [[Title|recipe-id]] in step text
+SHARE_FIELDS = ("title", "meal", "servings", "servings_num", "servings_inferred", "ingredients", "steps",
+                "prep_min", "cook_min", "total_min", "active_min", "nutrition", "tags", "source_url", "source_note", "kind")
+SHARE_HDR = {"Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow", "Referrer-Policy": "no-referrer",
+             "X-Content-Type-Options": "nosniff"}
+SHARE_ASSETS = {"share.js": "text/javascript", "kit.js": "text/javascript", "icon.svg": "image/svg+xml"}
+
+
+def by_share(token: str) -> Path:
+    if not SHARE_RE.fullmatch(token or ""):
+        raise HTTPException(404)
+    for d in RECIPES.iterdir():
+        f = d / "recipe.json"
+        if f.exists():
+            try:
+                r = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if r.get("share_token") and not r.get("draft") and secrets.compare_digest(r["share_token"], token):
+                return d
+    raise HTTPException(404)
+
+
+@app.post("/api/recipes/{rid}/share")  # behind Authentik: turn the public link on (same link every time)
+def share_on(rid: str):
+    d = rdir(rid)
+    r = load(d)
+    if r.get("draft"):
+        raise HTTPException(400, "save the recipe before sharing it")
+    if not r.get("share_token"):
+        r["share_token"] = secrets.token_urlsafe(16)
+        save(d, r)
+    return {"token": r["share_token"], "path": f"/s/{r['share_token']}"}
+
+
+@app.delete("/api/recipes/{rid}/share")  # the old link stops working at once
+def share_off(rid: str):
+    d = rdir(rid)
+    r = load(d)
+    r.pop("share_token", None)
+    save(d, r)
+    return {"ok": True}
+
+
+@app.get("/s/assets/{name}")
+def share_asset(name: str):
+    if name not in SHARE_ASSETS:
+        raise HTTPException(404)
+    f = APP / "static" / ("icons" if name.endswith(".svg") else "") / name
+    return FileResponse(f, media_type=SHARE_ASSETS[name], headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
+
+
+@app.get("/s/{token}")
+def share_page(token: str):
+    by_share(token)
+    csp = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; "
+           "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+    return FileResponse(APP / "static" / "share.html", media_type="text/html",
+                        headers={**SHARE_HDR, "Content-Security-Policy": csp})
+
+
+@app.get("/s/{token}/recipe")
+def share_recipe(token: str):
+    d = by_share(token)
+    r = load(d)
+    out = {k: r.get(k) for k in SHARE_FIELDS}
+    # links to other recipes ([[Title|id]]) become plain titles: those recipes are not shared
+    out["steps"] = [RECIPE_LINK.sub(lambda m: m.group(1), s) for s in r.get("steps") or []]
+    if out["source_url"] and not re.match(r"https?://", out["source_url"], re.I):
+        out["source_url"] = None
+    c = r.get("cover")
+    if c and (d / c).is_file():
+        out["cover"] = f"/s/{token}/cover"
+    else:  # a cover the server could not download: the page's own picture, loaded by the browser
+        out["cover"] = r.get("cover_url") if (r.get("cover_url") or "").startswith("https://") else None
+    return JSONResponse(out, headers=SHARE_HDR)
+
+
+@app.get("/s/{token}/cover")
+def share_cover(token: str):
+    d = by_share(token)
+    c = load(d).get("cover")
+    f = (d / c).resolve() if c else None
+    if not f or d.resolve() not in f.parents or not f.is_file() or f.suffix.lower() not in IMG_EXT:
+        raise HTTPException(404)
+    return FileResponse(f, headers=SHARE_HDR)
 
 
 @app.post("/api/recipes/{rid}/thumbs")
